@@ -207,6 +207,65 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .adv { margin-bottom: 8px; }
 .adv summary { color: var(--accent); font-size: 14px; cursor: pointer; padding: 4px 0; }
 
+/* ---------- gym / training ---------- */
+.btn.full { width: 100%; margin-top: 12px; }
+.btn.tiny { padding: 6px 12px; font-size: 13px; border-radius: 10px; }
+
+.ex-plan {
+  display: flex; align-items: center; gap: 10px; padding: 10px 2px;
+  border-top: 1px solid var(--line);
+}
+.ex-plan:first-of-type { border-top: none; }
+.ex-main { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.ex-name { font-weight: 600; }
+.ex-sub { font-size: 12px; color: var(--muted); }
+.prog-up { color: var(--good); font-weight: 800; }
+
+/* session */
+.session-head {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  background: var(--bg); padding: 6px 0 12px; margin-bottom: 4px;
+}
+.session-title { font-weight: 800; font-size: 17px; flex: 1; text-align: center; }
+
+.ex-block { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; margin-bottom: 12px; }
+.ex-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 10px; }
+.ex-best { color: var(--flame); font-size: 13px; font-weight: 700; white-space: nowrap; }
+.sets { display: flex; flex-direction: column; gap: 8px; }
+.set-row { display: flex; align-items: center; gap: 8px; }
+.set-row.done .set-in { border-color: color-mix(in srgb, var(--good) 45%, var(--line)); }
+.set-n { width: 20px; color: var(--muted); font-size: 13px; text-align: center; flex: 0 0 auto; }
+.set-in {
+  flex: 1; min-width: 0; background: var(--bg-2); border: 1px solid var(--line); color: var(--text);
+  padding: 10px; border-radius: 10px; font-size: 16px; text-align: center;
+}
+.set-in:focus { outline: none; border-color: var(--accent); }
+.set-row .x { color: var(--muted); flex: 0 0 auto; }
+.set-check {
+  width: 40px; height: 40px; flex: 0 0 auto; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--card-2); color: var(--muted); font-weight: 800; font-size: 16px;
+}
+.set-check.on { background: var(--good); border-color: var(--good); color: #06110c; }
+.pr { font-size: 16px; flex: 0 0 auto; }
+.fld.notes { margin-top: 4px; }
+
+/* rest timer bar */
+.rest-bar {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(78px + var(--safe-bottom)); z-index: 40;
+  display: flex; align-items: center; gap: 12px;
+  background: var(--accent); color: #08122b; padding: 8px 12px 8px 16px;
+  border-radius: 999px; box-shadow: 0 6px 20px rgba(0,0,0,.4); font-weight: 800;
+}
+.rest-bar .rest-t { font-variant-numeric: tabular-nums; }
+.rest-bar .rest-t.done { color: #08122b; }
+.rest-bar .btn.tiny { background: rgba(8,18,43,.15); border: none; color: #08122b; }
+.rest-actions { display: flex; gap: 6px; }
+
+.seg.wrap { flex-wrap: wrap; }
+.seg.wrap .seg-btn { flex: 1 0 30%; }
+
 /* ---------- buttons ---------- */
 .btn {
   border: 1px solid var(--line); background: var(--card-2); color: var(--text);
@@ -229,7 +288,8 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .nav-btn {
   background: none; border: none; color: var(--muted);
   display: flex; flex-direction: column; align-items: center; gap: 3px;
-  font-size: 11px; font-weight: 600; padding: 4px 22px; border-radius: 12px;
+  font-size: 11px; font-weight: 600; padding: 4px 12px; border-radius: 12px;
+  flex: 1 1 0; min-width: 0;
 }
 .nav-btn .nav-ic { font-size: 20px; filter: grayscale(.4) opacity(.7); }
 .nav-btn.active { color: var(--accent); }

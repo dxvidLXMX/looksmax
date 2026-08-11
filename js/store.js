@@ -3,6 +3,7 @@
 //  Cloud sync (supabase-sync.js) reads/writes through here.
 // ============================================================
 import { defaultHabits, cryptoId } from "./defaults.js";
+import { e1rm } from "./program.js";
 
 const KEY = "looksmax.v1";
 
@@ -34,12 +35,26 @@ export function defaultProfile() {
   };
 }
 
+export function defaultTraining() {
+  return {
+    configured: false,
+    experience: "beginner",   // beginner | intermediate | advanced
+    goal: "muscle",           // muscle | strength | lean
+    equipment: "gym",         // gym | dumbbells | barbell | bodyweight
+    days: [1, 2, 4, 5],       // weekday numbers (0=Sun)
+    splitId: "ul4",
+    updatedAt: 0,
+  };
+}
+
 // backfill fields added in later versions so old saves keep working
 function normalize(s) {
   s.habits ||= [];
   s.completions ||= {};
   s.weights ||= {};                 // { "YYYY-MM-DD": { w:Number, updatedAt } }
+  s.workouts ||= {};                // { [id]: { id, date, templateId, entries, notes, updatedAt, deleted } }
   s.profile = { ...defaultProfile(), ...(s.profile || {}) };
+  s.training = { ...defaultTraining(), ...(s.training || {}) };
   s.meta ||= { installedAt: Date.now() };
   return s;
 }
@@ -373,6 +388,77 @@ export function goalProgress() {
     etaDate = d;
   }
   return { toGo, direction: toGo >= 0 ? "gain" : "lose", etaWeeks, etaDate, target: p.targetWeight };
+}
+
+// ---------- training config ----------
+export function getTraining() { return state.training; }
+export function updateTraining(patch) {
+  state.training = { ...state.training, ...patch, updatedAt: Date.now() };
+  commit();
+  return state.training;
+}
+
+// ---------- workouts ----------
+export function saveWorkout(w) {
+  const id = w.id || cryptoId();
+  state.workouts[id] = { ...w, id, updatedAt: Date.now(), deleted: !!w.deleted };
+  commit();
+  return state.workouts[id];
+}
+export function getWorkout(id) { return state.workouts[id] || null; }
+// persist edits (e.g. typing weight/reps) WITHOUT triggering a UI re-render
+export function saveWorkoutQuiet(w) {
+  const id = w.id; if (!id) return;
+  state.workouts[id] = { ...w, id, updatedAt: Date.now() };
+  persist(state);
+  if (syncHook) syncHook();
+}
+export function deleteWorkout(id) {
+  const w = state.workouts[id];
+  if (!w) return;
+  w.deleted = true; w.updatedAt = Date.now();
+  commit();
+}
+export function allWorkouts() {
+  return Object.values(state.workouts)
+    .filter(w => !w.deleted)
+    .sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : 0); // newest first
+}
+export function workoutsForDate(key) {
+  return allWorkouts().filter(w => w.date === key);
+}
+
+// most recent entry for an exercise, returning only the sets actually completed
+export function lastEntryForExercise(exId, excludeId = null) {
+  for (const w of allWorkouts()) {           // newest first
+    if (w.id === excludeId) continue;
+    const entry = (w.entries || []).find(e => e.exId === exId);
+    const doneSets = (entry?.sets || []).filter(s => s.done && Number(s.reps) > 0);
+    if (doneSets.length) return { date: w.date, sets: doneSets };
+  }
+  return null;
+}
+
+// per-exercise history for charts: [{key, w:e1rm}] oldest->newest (best done set per session)
+export function exerciseHistory(exId) {
+  const out = [];
+  for (const w of [...allWorkouts()].reverse()) { // oldest first
+    const entry = (w.entries || []).find(e => e.exId === exId);
+    if (!entry) continue;
+    const done = (entry.sets || []).filter(s => s.done);
+    const best = Math.max(0, ...done.map(s => e1rm(Number(s.w), Number(s.reps))));
+    if (best > 0) out.push({ key: w.date, w: best });
+  }
+  return out;
+}
+export function bestE1RM(exId, excludeId = null) {
+  let best = 0;
+  for (const w of allWorkouts()) {
+    if (w.id === excludeId) continue;
+    const entry = (w.entries || []).find(e => e.exId === exId);
+    for (const s of entry?.sets || []) if (s.done) best = Math.max(best, e1rm(Number(s.w), Number(s.reps)));
+  }
+  return best;
 }
 
 // ---------- raw access for sync layer ----------

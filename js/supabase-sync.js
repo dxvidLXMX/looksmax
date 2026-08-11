@@ -121,16 +121,19 @@ async function pullAndMerge() {
     { data: rComp, error: e2 },
     { data: rWeights, error: e3 },
     { data: rProfile, error: e4 },
+    { data: rWorkouts, error: e5 },
   ] = await Promise.all([
     supabase.from("habits").select("*"),
     supabase.from("completions").select("*"),
     supabase.from("weights").select("*"),
     supabase.from("profiles").select("*").maybeSingle(),
+    supabase.from("workouts").select("*"),
   ]);
   if (e1) throw e1;
   if (e2) throw e2;
   if (e3) throw e3;
   if (e4) throw e4;
+  if (e5) throw e5;
 
   const s = store._getState();
 
@@ -164,11 +167,30 @@ async function pullAndMerge() {
     }
   }
 
-  // merge profile (single row) last-write-wins
+  // merge workouts by id, last-write-wins
+  s.workouts ||= {};
+  for (const r of rWorkouts || []) {
+    const remoteUpdated = Number(r.updated_at) || 0;
+    const cur = s.workouts[r.id];
+    if (!cur || remoteUpdated > (cur.updatedAt || 0)) {
+      s.workouts[r.id] = {
+        id: r.id, date: r.date, templateId: r.template_id,
+        entries: r.entries || [], notes: r.notes || "",
+        updatedAt: remoteUpdated, deleted: !!r.deleted,
+      };
+    }
+  }
+
+  // merge profile + training (stored together in the single profiles row)
   if (rProfile && rProfile.data) {
+    const d = rProfile.data;
     const remoteUpdated = Number(rProfile.updated_at) || 0;
-    if (remoteUpdated > (s.profile?.updatedAt || 0)) {
-      s.profile = { ...s.profile, ...rProfile.data, updatedAt: remoteUpdated };
+    const remoteProfile = d.profile || d;         // tolerate old flat shape
+    if ((remoteProfile.updatedAt || remoteUpdated) > (s.profile?.updatedAt || 0)) {
+      s.profile = { ...s.profile, ...remoteProfile };
+    }
+    if (d.training && (d.training.updatedAt || 0) > (s.training?.updatedAt || 0)) {
+      s.training = { ...s.training, ...d.training };
     }
   }
 
@@ -211,10 +233,22 @@ async function pushLocal() {
     if (error) throw error;
   }
 
-  // profile (single row per user)
-  if (s.profile && s.profile.updatedAt) {
+  // workouts
+  const workoutRows = Object.values(s.workouts || {}).map(w => ({
+    id: w.id, user_id: uid(), date: w.date, template_id: w.templateId || null,
+    entries: w.entries || [], notes: w.notes || "",
+    deleted: !!w.deleted, updated_at: w.updatedAt || Date.now(),
+  }));
+  if (workoutRows.length) {
+    const { error } = await supabase.from("workouts").upsert(workoutRows, { onConflict: "id" });
+    if (error) throw error;
+  }
+
+  // profile + training (single row per user, stored together)
+  const settingsUpdated = Math.max(s.profile?.updatedAt || 0, s.training?.updatedAt || 0);
+  if (settingsUpdated) {
     const { error } = await supabase.from("profiles")
-      .upsert({ user_id: uid(), data: s.profile, updated_at: s.profile.updatedAt },
+      .upsert({ user_id: uid(), data: { profile: s.profile, training: s.training }, updated_at: settingsUpdated },
               { onConflict: "user_id" });
     if (error) throw error;
   }

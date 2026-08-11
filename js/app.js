@@ -4,6 +4,7 @@
 import * as store from "./store.js";
 import { CATEGORY_ICONS, CATEGORY_LABELS, TIME_LABELS } from "./defaults.js";
 import * as cloud from "./supabase-sync.js";
+import * as program from "./program.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s).replace(/[&<>"']/g, c =>
@@ -15,6 +16,7 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 // ---------------- shell ----------------
 function render() {
   if (tab === "today") renderToday();
+  else if (tab === "gym") renderGym();
   else if (tab === "body") renderBody();
   else if (tab === "history") renderHistory();
   else if (tab === "habits") renderHabits();
@@ -428,6 +430,249 @@ function openGoalModal() {
   updatePreview();
 }
 
+// ---------------- GYM / TRAINING ----------------
+let gymSession = null;         // active workout id (session view open)
+let restRemaining = 0, restTimer = null;
+
+function renderGym() {
+  if (gymSession) { renderSession(gymSession); return; }
+  const t = store.getTraining();
+  const today = store.todayKey();
+  const wd = store.dateFromKey(today).getDay();
+  const todays = store.workoutsForDate(today);
+  const active = todays.find(w => !w.completed);
+  const done = todays.find(w => w.completed);
+  const tpl = program.templateForWeekday(t, wd);
+
+  let main;
+  if (active) {
+    main = `<div class="body-card">
+      <div class="bc-head"><span>In progress</span><span class="bc-sub">${program.TEMPLATES[active.templateId]?.name || ""}</span></div>
+      <p class="stat-lbl">You've got a workout going.</p>
+      <button class="btn primary full" data-act="resume-workout" data-id="${active.id}">Resume workout</button>
+    </div>`;
+  } else if (done) {
+    const sets = (done.entries || []).reduce((a, e) => a + e.sets.filter(s => s.done).length, 0);
+    main = `<div class="body-card">
+      <div class="bc-head"><span>Today ✅</span><span class="bc-sub">${program.TEMPLATES[done.templateId]?.name || "Workout"}</span></div>
+      <p class="stat-lbl">${sets} sets logged. Recover well.</p>
+      <button class="btn full" data-act="resume-workout" data-id="${done.id}">View / edit</button>
+    </div>`;
+  } else if (tpl) {
+    main = plannedCard(tpl.templateId);
+  } else {
+    let nextWd = null, nextTpl = null;
+    for (let i = 1; i <= 7; i++) { const w = (wd + i) % 7; const tp = program.templateForWeekday(t, w); if (tp) { nextWd = w; nextTpl = tp.templateId; break; } }
+    main = `<div class="body-card">
+      <div class="bc-head"><span>Rest day 💤</span></div>
+      <p class="stat-lbl">Recover, hit your protein, sleep.${nextTpl ? ` Next up: <b>${program.TEMPLATES[nextTpl].name}</b> on ${WEEKDAYS[nextWd]}.` : ""}</p>
+    </div>`;
+  }
+
+  $("#view").innerHTML = `
+    <div class="habits-head">
+      <h2 class="screen-title">Training</h2>
+      <button class="btn" data-act="edit-plan">Plan</button>
+    </div>
+    ${main}
+    ${gymHistoryList()}
+  `;
+}
+
+function plannedCard(templateId) {
+  const tpl = program.TEMPLATES[templateId];
+  const rows = tpl.exercises.map(exId => {
+    const ex = program.getExercise(exId);
+    const p = program.prescribe(ex, store.lastEntryForExercise(exId));
+    const target = p.weight != null ? `${p.sets}×${p.targetReps} @ ${p.weight} lb` : `${p.sets}×${p.targetReps}${p.isBw ? " reps" : ""}`;
+    return `<div class="ex-plan" data-act="ex-detail" data-ex="${exId}">
+      <div class="ex-main"><span class="ex-name">${esc(ex.name)}</span>
+        <span class="ex-sub">${target} · ${p.lastSummary ? "last " + p.lastSummary : p.note}</span></div>
+      ${p.progressed ? '<span class="prog-up">⬆</span>' : ""}
+    </div>`;
+  }).join("");
+  return `<div class="body-card">
+    <div class="bc-head"><span>Today · ${tpl.name}</span><span class="bc-sub">${tpl.exercises.length} exercises</span></div>
+    ${rows}
+    <button class="btn primary full" data-act="start-workout" data-tpl="${templateId}">Start workout</button>
+  </div>`;
+}
+
+function gymHistoryList() {
+  const list = store.allWorkouts().filter(w => w.completed).slice(0, 12);
+  if (!list.length) return "";
+  const rows = list.map(w => {
+    const sets = (w.entries || []).reduce((a, e) => a + e.sets.filter(s => s.done).length, 0);
+    return `<div class="hb-row" data-act="resume-workout" data-id="${w.id}">
+      <span class="hb-ic">🏋️</span>
+      <span class="hb-main"><span class="hb-name">${program.TEMPLATES[w.templateId]?.name || "Workout"}</span>
+        <span class="hb-sub">${shortDate(w.date)} · ${sets} sets</span></span>
+      <span class="hb-edit">›</span></div>`;
+  }).join("");
+  return `<section class="tod"><h3 class="tod-title">Recent workouts</h3>${rows}</section>`;
+}
+
+function startWorkout(templateId) {
+  const tpl = program.TEMPLATES[templateId];
+  const entries = tpl.exercises.map(exId => {
+    const ex = program.getExercise(exId);
+    const p = program.prescribe(ex, store.lastEntryForExercise(exId));
+    const sets = Array.from({ length: p.sets }, () => ({ w: p.weight ?? "", reps: p.targetReps, done: false }));
+    return { exId, sets };
+  });
+  const w = store.saveWorkout({ date: store.todayKey(), templateId, entries, completed: false, notes: "" });
+  gymSession = w.id;
+  render();
+}
+
+// ----- active session view -----
+function renderSession(id) {
+  const w = store.getWorkout(id);
+  if (!w) { gymSession = null; renderGym(); return; }
+  const name = program.TEMPLATES[w.templateId]?.name || "Workout";
+
+  const blocks = (w.entries || []).map((entry, ei) => {
+    const ex = program.getExercise(entry.exId);
+    const best = store.bestE1RM(entry.exId, w.id);
+    const p = program.prescribe(ex, store.lastEntryForExercise(entry.exId, w.id));
+    const setRows = entry.sets.map((s, si) => {
+      const isPR = !p.isBw && s.done && Number(s.w) && Number(s.reps) && program.e1rm(+s.w, +s.reps) > best && best > 0;
+      return `<div class="set-row ${s.done ? "done" : ""}">
+        <span class="set-n">${si + 1}</span>
+        <input class="set-in" type="number" inputmode="decimal" value="${s.w ?? ""}" placeholder="${p.isBw ? "BW" : "lb"}" data-w data-ei="${ei}" data-si="${si}"/>
+        <span class="x">×</span>
+        <input class="set-in" type="number" inputmode="numeric" value="${s.reps ?? ""}" placeholder="reps" data-r data-ei="${ei}" data-si="${si}"/>
+        <button class="set-check ${s.done ? "on" : ""}" data-act="set-done" data-ei="${ei}" data-si="${si}">✓</button>
+        ${isPR ? '<span class="pr">🏆</span>' : ""}
+      </div>`;
+    }).join("");
+    return `<div class="ex-block">
+      <div class="ex-head" data-act="ex-detail" data-ex="${entry.exId}">
+        <div><div class="ex-name">${esc(ex.name)}</div>
+          <div class="ex-sub">Target ${p.weight != null ? `${p.targetReps} @ ${p.weight} lb` : `${p.targetReps} reps`}${p.lastSummary ? ` · last ${p.lastSummary}` : ""}</div></div>
+        <span class="ex-best">${best ? "🏆 " + best : ""}</span>
+      </div>
+      <div class="sets">${setRows}</div>
+      <button class="btn tiny" data-act="add-set" data-ei="${ei}">+ set</button>
+    </div>`;
+  }).join("");
+
+  $("#view").innerHTML = `
+    <div class="session-head">
+      <button class="btn tiny" data-act="close-session">‹ Back</button>
+      <div class="session-title">${name}</div>
+      <button class="btn primary tiny" data-act="finish-workout" data-id="${w.id}">Finish</button>
+    </div>
+    ${blocks}
+    <label class="fld notes"><span>Notes</span>
+      <input id="w-notes" type="text" value="${esc(w.notes || "")}" placeholder="How did it feel?" data-notes/></label>
+    <button class="btn danger ghost full" data-act="discard-workout" data-id="${w.id}">Discard workout</button>
+    <div id="rest-bar" class="rest-bar hidden"></div>
+  `;
+  paintRest();
+}
+
+// ----- rest timer -----
+function fmtClock(sec) { const m = Math.floor(sec / 60), s = sec % 60; return `${m}:${String(s).padStart(2, "0")}`; }
+function startRest(sec) {
+  restRemaining = sec;
+  clearInterval(restTimer);
+  restTimer = setInterval(() => {
+    restRemaining--;
+    if (restRemaining <= 0) { clearInterval(restTimer); restRemaining = 0; if (navigator.vibrate) navigator.vibrate([120, 60, 120]); }
+    paintRest();
+  }, 1000);
+  paintRest();
+}
+function stopRest() { clearInterval(restTimer); restRemaining = 0; const b = $("#rest-bar"); if (b) b.classList.add("hidden"); }
+function paintRest() {
+  const b = $("#rest-bar"); if (!b) return;
+  if (restRemaining > 0) {
+    b.classList.remove("hidden");
+    b.innerHTML = `<span class="rest-t">⏱ ${fmtClock(restRemaining)}</span>
+      <span class="rest-actions">
+        <button class="btn tiny" data-act="rest-add" data-s="30">+30s</button>
+        <button class="btn tiny" data-act="rest-skip">Skip</button></span>`;
+  } else if (restTimer !== null && restRemaining === 0 && b.innerHTML) {
+    b.classList.remove("hidden");
+    b.innerHTML = `<span class="rest-t done">Rest done ✅</span>
+      <button class="btn tiny" data-act="rest-skip">Dismiss</button>`;
+  }
+}
+
+// ----- plan settings modal -----
+function openPlanModal() {
+  const t = store.getTraining();
+  const seg = (field, opts, cur) => opts.map(([v, l]) =>
+    `<button type="button" class="seg-btn ${cur === v ? "on" : ""}" data-${field}="${v}">${l}</button>`).join("");
+  const dayChips = WEEKDAYS.map((w, i) =>
+    `<button type="button" class="chip ${t.days.includes(i) ? "on" : ""}" data-pday="${i}">${w}</button>`).join("");
+
+  openModal(`
+    <h3>Your plan</h3>
+    <div class="fld"><span>Experience</span><div class="seg wrap" id="s-exp">${seg("exp", [["beginner", "Beginner"], ["intermediate", "Intermediate"], ["advanced", "Advanced"]], t.experience)}</div></div>
+    <div class="fld"><span>Goal</span><div class="seg wrap" id="s-goal">${seg("goal", [["muscle", "Muscle"], ["strength", "Strength"], ["lean", "Lean"]], t.goal)}</div></div>
+    <div class="fld"><span>Equipment</span><div class="seg wrap" id="s-eq">${seg("eq", [["gym", "Full gym"], ["dumbbells", "Dumbbells"], ["barbell", "Barbell"], ["bodyweight", "Bodyweight"]], t.equipment)}</div></div>
+    <div class="fld"><span>Training days</span><div class="chips">${dayChips}</div></div>
+    <div class="note">Currently running: <b>${program.SPLITS[t.splitId]?.name || t.splitId}</b>. (More split options coming.)</div>
+    <div class="modal-actions"><span></span><div>
+      <button class="btn" data-act="close-modal">Cancel</button>
+      <button class="btn primary" data-act="save-plan">Save</button>
+    </div></div>
+  `);
+  const modal = $("#modal");
+  let exp = t.experience, goal = t.goal, eq = t.equipment;
+  const pick = (attr, set) => modal.querySelectorAll(`[data-${attr}]`).forEach(b => b.onclick = () => {
+    modal.querySelectorAll(`[data-${attr}]`).forEach(x => x.classList.toggle("on", x === b)); set(b.dataset[attr]);
+  });
+  pick("exp", v => exp = v); pick("goal", v => goal = v); pick("eq", v => eq = v);
+  modal.querySelectorAll(".chip[data-pday]").forEach(b => b.onclick = () => b.classList.toggle("on"));
+  modal._collect = () => ({
+    experience: exp, goal, equipment: eq,
+    days: [...modal.querySelectorAll(".chip[data-pday].on")].map(x => Number(x.dataset.pday)).sort((a, b) => a - b),
+  });
+}
+
+// ----- exercise progress detail -----
+function openExerciseDetail(exId) {
+  const ex = program.getExercise(exId);
+  const hist = store.exerciseHistory(exId);
+  const best = store.bestE1RM(exId);
+  const chart = hist.length >= 2 ? miniChart(hist) : `<p class="stat-lbl">Log this lift a few times to see your strength trend.</p>`;
+  openModal(`
+    <h3>${esc(ex.name)}</h3>
+    <div class="note">${esc(ex.muscle || "")} · target ${ex.repLow}–${ex.repHigh} reps × ${ex.sets} sets${best ? ` · best est. 1RM <b>${best} lb</b>` : ""}</div>
+    ${chart}
+    <div class="modal-actions"><span></span><button class="btn primary" data-act="close-modal">Close</button></div>
+  `);
+}
+
+function miniChart(series) {
+  const W = 320, H = 120, padL = 6, padR = 6, padT = 12, padB = 6;
+  const t0 = store.dateFromKey(series[0].key).getTime();
+  const t1 = store.dateFromKey(series[series.length - 1].key).getTime();
+  const span = Math.max(1, t1 - t0);
+  const X = k => padL + (store.dateFromKey(k).getTime() - t0) / span * (W - padL - padR);
+  let min = Math.min(...series.map(s => s.w)), max = Math.max(...series.map(s => s.w));
+  if (max - min < 2) { const m = (max + min) / 2; min = m - 1; max = m + 1; }
+  const pad = (max - min) * 0.18; min -= pad; max += pad;
+  const Y = w => padT + (1 - (w - min) / (max - min)) * (H - padT - padB);
+  const path = series.map((p, i) => (i ? "L" : "M") + X(p.key).toFixed(1) + " " + Y(p.w).toFixed(1)).join(" ");
+  const dots = series.map(s => `<circle cx="${X(s.key).toFixed(1)}" cy="${Y(s.w).toFixed(1)}" r="2.3" class="pt"/>`).join("");
+  return `<div class="body-card"><svg class="wchart" viewBox="0 0 ${W} ${H}" width="100%">
+    <text x="${padL}" y="10" class="axis-lbl">${Math.round(max)}</text>
+    <path d="${path}" class="trend-line"/>${dots}
+  </svg><div class="chart-x"><span>${shortDate(series[0].key)}</span><span class="trend-key">est. 1RM (lb)</span><span>${shortDate(series[series.length - 1].key)}</span></div></div>`;
+}
+
+function markGymHabit(date) {
+  for (const h of store.getActiveHabits()) {
+    if (h.category === "gym" && h.name.trim().toLowerCase() === "gym" && store.isScheduled(h, date) && !store.isDone(h.id, date)) {
+      store.setCompletion(h.id, date, true);
+    }
+  }
+}
+
 // ---------------- HABITS (manage) ----------------
 function renderHabits() {
   const groups = ["morning", "evening", "anytime"].map(tod => {
@@ -626,6 +871,62 @@ function onClick(e) {
       break;
     }
 
+    // --- gym ---
+    case "start-workout": startWorkout(el.dataset.tpl); break;
+    case "resume-workout": gymSession = id; render(); break;
+    case "close-session": gymSession = null; stopRest(); render(); break;
+    case "set-done": {
+      const w = store.getWorkout(gymSession); if (!w) break;
+      const set = w.entries[+el.dataset.ei].sets[+el.dataset.si];
+      set.done = !set.done;
+      if (set.done) { if (navigator.vibrate) navigator.vibrate(8); startRest(120); }
+      else stopRest();
+      store.saveWorkout(w); // triggers re-render + paintRest
+      break;
+    }
+    case "add-set": {
+      const w = store.getWorkout(gymSession); if (!w) break;
+      const sets = w.entries[+el.dataset.ei].sets;
+      const last = sets[sets.length - 1] || { w: "", reps: "" };
+      sets.push({ w: last.w, reps: last.reps, done: false });
+      store.saveWorkout(w);
+      break;
+    }
+    case "rest-add": startRest(restRemaining + Number(el.dataset.s || 30)); break;
+    case "rest-skip": stopRest(); break;
+    case "finish-workout": {
+      const w = store.getWorkout(id); if (!w) break;
+      const prs = [];
+      for (const entry of w.entries || []) {
+        const ex = program.getExercise(entry.exId);
+        if (ex.unit === "bw") continue;
+        const prev = store.bestE1RM(entry.exId, w.id);
+        let best = 0;
+        for (const s of entry.sets) if (s.done) best = Math.max(best, program.e1rm(+s.w, +s.reps));
+        if (best > prev && prev > 0) prs.push(`${ex.name} ${best}`);
+      }
+      w.completed = true;
+      store.saveWorkout(w);
+      markGymHabit(w.date);
+      gymSession = null; stopRest(); render();
+      toast(prs.length ? `🏆 PR! ${prs[0]}${prs.length > 1 ? ` +${prs.length - 1} more` : ""}` : "Workout saved 💪");
+      break;
+    }
+    case "discard-workout":
+      if (confirm("Discard this workout? Nothing will be saved.")) {
+        store.deleteWorkout(id); gymSession = null; stopRest(); render(); toast("Discarded");
+      }
+      break;
+    case "edit-plan": openPlanModal(); break;
+    case "save-plan": {
+      const data = $("#modal")._collect();
+      if (!data.days.length) data.days = [1, 2, 4, 5];
+      store.updateTraining(data);
+      closeModal(); render(); toast("Plan updated");
+      break;
+    }
+    case "ex-detail": openExerciseDetail(el.dataset.ex); break;
+
     case "add": openEditor(null); break;
     case "edit": openEditor(id); break;
     case "day": showDayDetail(el.dataset.key); break;
@@ -679,9 +980,28 @@ function onClick(e) {
   }
 }
 
+// persist weight/reps/notes typing without a re-render (keeps focus + taps intact)
+function onFieldChange(e) {
+  if (!gymSession) return;
+  const el = e.target;
+  const w = store.getWorkout(gymSession);
+  if (!w) return;
+  if (el.hasAttribute("data-w") || el.hasAttribute("data-r")) {
+    const set = w.entries[+el.dataset.ei]?.sets[+el.dataset.si];
+    if (!set) return;
+    const val = el.value === "" ? "" : Number(el.value);
+    if (el.hasAttribute("data-w")) set.w = val; else set.reps = val;
+    store.saveWorkoutQuiet(w);
+  } else if (el.hasAttribute("data-notes")) {
+    w.notes = el.value;
+    store.saveWorkoutQuiet(w);
+  }
+}
+
 // ---------------- boot ----------------
 function boot() {
   document.getElementById("app").addEventListener("click", onClick);
+  document.getElementById("app").addEventListener("change", onFieldChange);
   $("#modal-back").addEventListener("click", (e) => {
     if (e.target.id === "modal-back") closeModal();
   });
