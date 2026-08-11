@@ -266,6 +266,50 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .seg.wrap { flex-wrap: wrap; }
 .seg.wrap .seg-btn { flex: 1 0 30%; }
 
+/* ---------- eat / nutrition ---------- */
+.macro-row { display: flex; justify-content: space-between; font-size: 14px; margin: 2px 0 6px; }
+.bar { height: 8px; background: var(--bg-2); border-radius: 6px; overflow: hidden; margin-bottom: 12px; }
+.bar-fill { height: 100%; background: var(--accent); border-radius: 6px; transition: width .4s; }
+.bar-fill.p { background: var(--good); }
+.macro-mini { font-size: 12px; color: var(--muted); }
+
+.meal-card {
+  display: flex; align-items: flex-start; gap: 12px;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px; margin-bottom: 10px;
+}
+.meal-card.done { opacity: .6; }
+.meal-check {
+  width: 28px; height: 28px; flex: 0 0 auto; border-radius: 50%; margin-top: 2px;
+  border: 2px solid var(--line); background: var(--card-2); color: var(--muted); font-weight: 800;
+}
+.meal-check.done { background: var(--good); border-color: var(--good); color: #06110c; }
+.meal-main { flex: 1; min-width: 0; }
+.meal-slot { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); font-weight: 700; }
+.meal-name { font-weight: 600; margin: 2px 0; }
+.meal-card.done .meal-name { text-decoration: line-through; }
+.meal-macros { font-size: 13px; color: var(--text); }
+.meal-ing { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+/* ---------- sleep ---------- */
+.tip { padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.tip:first-of-type { border-top: none; }
+
+/* ---------- supplements ---------- */
+.supp { border-top: 1px solid var(--line); padding: 14px 0; }
+.supp:first-of-type { border-top: none; }
+.supp-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.supp-name { font-weight: 700; }
+.supp-dose { color: var(--accent); font-weight: 700; font-size: 14px; white-space: nowrap; }
+.supp-why { font-size: 14px; color: var(--text); margin: 6px 0; line-height: 1.45; }
+.supp-when { font-size: 13px; color: var(--muted); }
+.supp-caution { font-size: 13px; color: var(--warn); margin-top: 6px; }
+.supp-bp { font-size: 12px; color: var(--good); margin-top: 4px; }
+.supp .btn { margin-top: 10px; }
+.supp .btn[disabled] { opacity: .6; }
+.skip-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.skip-chip { background: var(--card-2); border: 1px solid var(--line); color: var(--muted); padding: 5px 10px; border-radius: 8px; font-size: 12px; text-decoration: line-through; }
+
 /* ---------- buttons ---------- */
 .btn {
   border: 1px solid var(--line); background: var(--card-2); color: var(--text);

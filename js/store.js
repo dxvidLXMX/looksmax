@@ -31,6 +31,8 @@ export function defaultProfile() {
     weeklyRate: 0,        // display-units per week (lb/week or kg/week)
     calorieTarget: null,  // manual override (null = auto)
     proteinTarget: null,  // manual override (null = auto)
+    diet: { type: "omnivore", avoid: [], mealsPerDay: "3+snacks", cooking: "quick" },
+    sleep: { targetBed: "23:00", targetWake: "07:00", currentBed: "", planStart: null },
     updatedAt: 0,
   };
 }
@@ -53,7 +55,11 @@ function normalize(s) {
   s.completions ||= {};
   s.weights ||= {};                 // { "YYYY-MM-DD": { w:Number, updatedAt } }
   s.workouts ||= {};                // { [id]: { id, date, templateId, entries, notes, updatedAt, deleted } }
+  s.mealPlans ||= {};               // { "YYYY-MM-DD": { plan:[{slot,mealId,servings}], done:{}, updatedAt } }
+  s.sleepLogs ||= {};               // { "YYYY-MM-DD": { bed:"HH:MM", wake:"HH:MM", quality, updatedAt } }
   s.profile = { ...defaultProfile(), ...(s.profile || {}) };
+  s.profile.diet = { ...defaultProfile().diet, ...(s.profile.diet || {}) };
+  s.profile.sleep = { ...defaultProfile().sleep, ...(s.profile.sleep || {}) };
   s.training = { ...defaultTraining(), ...(s.training || {}) };
   s.meta ||= { installedAt: Date.now() };
   return s;
@@ -459,6 +465,84 @@ export function bestE1RM(exId, excludeId = null) {
     for (const s of entry?.sets || []) if (s.done) best = Math.max(best, e1rm(Number(s.w), Number(s.reps)));
   }
   return best;
+}
+
+// ---------- nutrition ----------
+export function getDiet() { return state.profile.diet; }
+export function updateDiet(patch) {
+  state.profile = { ...state.profile, diet: { ...state.profile.diet, ...patch }, updatedAt: Date.now() };
+  commit();
+  return state.profile.diet;
+}
+export function getMealPlan(key) { return state.mealPlans[key] || null; }
+export function setMealPlan(key, plan) {
+  state.mealPlans[key] = { plan, done: state.mealPlans[key]?.done || {}, updatedAt: Date.now() };
+  commit();
+}
+export function toggleMealDone(key, idx) {
+  const mp = state.mealPlans[key]; if (!mp) return;
+  mp.done ||= {}; mp.done[idx] = !mp.done[idx]; mp.updatedAt = Date.now();
+  commit();
+}
+export function swapPlanMeal(key, idx, newMealId) {
+  const mp = state.mealPlans[key]; if (!mp || !mp.plan[idx]) return;
+  mp.plan[idx].mealId = newMealId; mp.updatedAt = Date.now();
+  commit();
+}
+
+// ---------- sleep ----------
+export function getSleep() { return state.profile.sleep; }
+export function updateSleep(patch) {
+  state.profile = { ...state.profile, sleep: { ...state.profile.sleep, ...patch }, updatedAt: Date.now() };
+  commit();
+  return state.profile.sleep;
+}
+export function logSleep(key, data) {
+  state.sleepLogs[key] = { ...state.sleepLogs[key], ...data, updatedAt: Date.now() };
+  commit();
+}
+export function getSleepLog(key) { return state.sleepLogs[key] || null; }
+
+// minutes of sleep from "HH:MM" bed/wake (handles crossing midnight)
+export function sleepDuration(bed, wake) {
+  if (!bed || !wake) return null;
+  const [bh, bm] = bed.split(":").map(Number);
+  const [wh, wm] = wake.split(":").map(Number);
+  let mins = (wh * 60 + wm) - (bh * 60 + bm);
+  if (mins <= 0) mins += 24 * 60;
+  return mins;
+}
+export function sleepSeries(days = 30) {
+  const out = [];
+  let key = todayKey();
+  for (let i = 0; i < days; i++) {
+    const log = state.sleepLogs[key];
+    if (log && log.bed && log.wake) out.push({ key, mins: sleepDuration(log.bed, log.wake) });
+    key = addDays(key, -1);
+  }
+  return out.reverse();
+}
+// tonight's target bedtime on a gradual shift plan (15 min closer every 2 days).
+// Bedtimes are anchored on a continuous evening axis so that an after-midnight
+// time (e.g. 01:30) is treated as "later" than 23:00, not earlier.
+export function tonightBedtime() {
+  const s = state.profile.sleep;
+  if (!s.currentBed || !s.targetBed) return s.targetBed || null;
+  if (!s.planStart) return s.currentBed;
+  const anchor = (t) => { let m = timeToMin(t); if (m < 720) m += 1440; return m; }; // before noon -> next day
+  const startD = dateFromKey(s.planStart);
+  const daysIn = Math.floor((dateFromKey(todayKey()) - startD) / 86400000);
+  const steps = Math.max(0, Math.floor(daysIn / 2));
+  const cur = anchor(s.currentBed), tgt = anchor(s.targetBed);
+  const dir = tgt < cur ? -1 : 1;   // usually shifting earlier (dir -1)
+  let mins = cur + dir * steps * 15;
+  if (dir < 0) mins = Math.max(tgt, mins); else mins = Math.min(tgt, mins);
+  return minToTime(mins);            // minToTime wraps mod 1440
+}
+export function timeToMin(t) { const [h, m] = t.split(":").map(Number); return h * 60 + m; }
+export function minToTime(mins) {
+  mins = ((mins % 1440) + 1440) % 1440;
+  return `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
 }
 
 // ---------- raw access for sync layer ----------

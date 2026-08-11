@@ -122,18 +122,24 @@ async function pullAndMerge() {
     { data: rWeights, error: e3 },
     { data: rProfile, error: e4 },
     { data: rWorkouts, error: e5 },
+    { data: rSleep, error: e6 },
+    { data: rMeals, error: e7 },
   ] = await Promise.all([
     supabase.from("habits").select("*"),
     supabase.from("completions").select("*"),
     supabase.from("weights").select("*"),
     supabase.from("profiles").select("*").maybeSingle(),
     supabase.from("workouts").select("*"),
+    supabase.from("sleep_logs").select("*"),
+    supabase.from("meal_plans").select("*"),
   ]);
   if (e1) throw e1;
   if (e2) throw e2;
   if (e3) throw e3;
   if (e4) throw e4;
   if (e5) throw e5;
+  if (e6) throw e6;
+  if (e7) throw e7;
 
   const s = store._getState();
 
@@ -178,6 +184,26 @@ async function pullAndMerge() {
         entries: r.entries || [], notes: r.notes || "",
         updatedAt: remoteUpdated, deleted: !!r.deleted,
       };
+    }
+  }
+
+  // merge sleep logs by date
+  s.sleepLogs ||= {};
+  for (const r of rSleep || []) {
+    const remoteUpdated = Number(r.updated_at) || 0;
+    const cur = s.sleepLogs[r.date];
+    if (!cur || remoteUpdated > (cur.updatedAt || 0)) {
+      s.sleepLogs[r.date] = { bed: r.bed, wake: r.wake, quality: r.quality, updatedAt: remoteUpdated };
+    }
+  }
+
+  // merge meal plans by date
+  s.mealPlans ||= {};
+  for (const r of rMeals || []) {
+    const remoteUpdated = Number(r.updated_at) || 0;
+    const cur = s.mealPlans[r.date];
+    if (!cur || remoteUpdated > (cur.updatedAt || 0)) {
+      s.mealPlans[r.date] = { plan: r.plan || [], done: r.done || {}, updatedAt: remoteUpdated };
     }
   }
 
@@ -241,6 +267,25 @@ async function pushLocal() {
   }));
   if (workoutRows.length) {
     const { error } = await supabase.from("workouts").upsert(workoutRows, { onConflict: "id" });
+    if (error) throw error;
+  }
+
+  // sleep logs
+  const sleepRows = Object.entries(s.sleepLogs || {}).map(([date, r]) => ({
+    user_id: uid(), date, bed: r.bed || null, wake: r.wake || null,
+    quality: r.quality ?? null, updated_at: r.updatedAt || Date.now(),
+  }));
+  if (sleepRows.length) {
+    const { error } = await supabase.from("sleep_logs").upsert(sleepRows, { onConflict: "user_id,date" });
+    if (error) throw error;
+  }
+
+  // meal plans
+  const mealRows = Object.entries(s.mealPlans || {}).map(([date, r]) => ({
+    user_id: uid(), date, plan: r.plan || [], done: r.done || {}, updated_at: r.updatedAt || Date.now(),
+  }));
+  if (mealRows.length) {
+    const { error } = await supabase.from("meal_plans").upsert(mealRows, { onConflict: "user_id,date" });
     if (error) throw error;
   }
 

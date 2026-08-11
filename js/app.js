@@ -5,6 +5,8 @@ import * as store from "./store.js";
 import { CATEGORY_ICONS, CATEGORY_LABELS, TIME_LABELS } from "./defaults.js";
 import * as cloud from "./supabase-sync.js";
 import * as program from "./program.js";
+import * as nutrition from "./nutrition.js";
+import { SUPPLEMENTS, TIER_INFO, BLUEPRINT_SKIP } from "./supplements.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s).replace(/[&<>"']/g, c =>
@@ -14,13 +16,51 @@ let tab = "today";
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 // ---------------- shell ----------------
+let moreSub = null; // sub-view within the "More" hub
+
 function render() {
   if (tab === "today") renderToday();
   else if (tab === "gym") renderGym();
+  else if (tab === "eat") renderEat();
   else if (tab === "body") renderBody();
-  else if (tab === "history") renderHistory();
-  else if (tab === "habits") renderHabits();
+  else if (tab === "more") renderMore();
   syncNavAndHeader();
+}
+
+function renderMore() {
+  if (moreSub === "sleep") return renderSleep();
+  if (moreSub === "supplements") return renderSupplements();
+  if (moreSub === "history") return renderHistory();
+  if (moreSub === "habits") return renderHabits();
+  renderMoreMenu();
+}
+
+function renderMoreMenu() {
+  const c = cloud.getStatus();
+  const item = (sub, icon, title, sub2) =>
+    `<div class="hb-row" data-act="more-nav" data-sub="${sub}">
+      <span class="hb-ic">${icon}</span>
+      <span class="hb-main"><span class="hb-name">${title}</span><span class="hb-sub">${sub2}</span></span>
+      <span class="hb-edit">›</span></div>`;
+  $("#view").innerHTML = `
+    <h2 class="screen-title">More</h2>
+    ${item("sleep", "😴", "Sleep", "Fix your schedule + log sleep")}
+    ${item("supplements", "💊", "Supplements", "Your evidence-based stack")}
+    ${item("history", "📊", "History", "Habit consistency heatmap")}
+    ${item("habits", "⚙️", "Habits", "Add / edit your daily habits")}
+    <div class="hb-row" data-act="open-account">
+      <span class="hb-ic">☁️</span>
+      <span class="hb-main"><span class="hb-name">Account & data</span>
+        <span class="hb-sub">${c.enabled ? (c.user || "Sign in to sync") : "Local · backup / restore"}</span></span>
+      <span class="hb-edit">›</span></div>
+  `;
+}
+
+// back header used inside More sub-views
+function subHeader(title) {
+  return `<div class="session-head">
+    <button class="btn tiny" data-act="more-back">‹ More</button>
+    <div class="session-title">${title}</div><span style="width:56px"></span></div>`;
 }
 
 const fmt1 = (n) => (Math.round(n * 10) / 10).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 });
@@ -136,7 +176,7 @@ function renderHistory() {
   }).join("");
 
   $("#view").innerHTML = `
-    <h2 class="screen-title">History</h2>
+    ${subHeader("History")}
     <div class="stat-row three">
       <div class="stat"><span class="stat-num">🔥 ${streak}</span><span class="stat-lbl">current streak</span></div>
       <div class="stat"><span class="stat-num">${avg30}%</span><span class="stat-lbl">30-day avg</span></div>
@@ -638,7 +678,7 @@ function openExerciseDetail(exId) {
   const ex = program.getExercise(exId);
   const hist = store.exerciseHistory(exId);
   const best = store.bestE1RM(exId);
-  const chart = hist.length >= 2 ? miniChart(hist) : `<p class="stat-lbl">Log this lift a few times to see your strength trend.</p>`;
+  const chart = hist.length >= 2 ? miniChart(hist, "est. 1RM (lb)") : `<p class="stat-lbl">Log this lift a few times to see your strength trend.</p>`;
   openModal(`
     <h3>${esc(ex.name)}</h3>
     <div class="note">${esc(ex.muscle || "")} · target ${ex.repLow}–${ex.repHigh} reps × ${ex.sets} sets${best ? ` · best est. 1RM <b>${best} lb</b>` : ""}</div>
@@ -647,7 +687,7 @@ function openExerciseDetail(exId) {
   `);
 }
 
-function miniChart(series) {
+function miniChart(series, label = "") {
   const W = 320, H = 120, padL = 6, padR = 6, padT = 12, padB = 6;
   const t0 = store.dateFromKey(series[0].key).getTime();
   const t1 = store.dateFromKey(series[series.length - 1].key).getTime();
@@ -662,7 +702,7 @@ function miniChart(series) {
   return `<div class="body-card"><svg class="wchart" viewBox="0 0 ${W} ${H}" width="100%">
     <text x="${padL}" y="10" class="axis-lbl">${Math.round(max)}</text>
     <path d="${path}" class="trend-line"/>${dots}
-  </svg><div class="chart-x"><span>${shortDate(series[0].key)}</span><span class="trend-key">est. 1RM (lb)</span><span>${shortDate(series[series.length - 1].key)}</span></div></div>`;
+  </svg><div class="chart-x"><span>${shortDate(series[0].key)}</span><span class="trend-key">${label}</span><span>${shortDate(series[series.length - 1].key)}</span></div></div>`;
 }
 
 function markGymHabit(date) {
@@ -671,6 +711,204 @@ function markGymHabit(date) {
       store.setCompletion(h.id, date, true);
     }
   }
+}
+
+// ---------------- EAT (nutrition) ----------------
+function renderEat() {
+  const targets = store.computeTargets();
+  const diet = store.getDiet();
+  const today = store.todayKey();
+
+  if (!targets) {
+    $("#view").innerHTML = `
+      <h2 class="screen-title">Eat</h2>
+      <div class="body-card empty-card">
+        <p>Set up your profile in the <b>Body</b> tab first — your meal plan is built from your calorie & protein targets.</p>
+        <button class="btn primary" data-act="goto-body">Go to Body</button>
+      </div>`;
+    return;
+  }
+
+  let mp = store.getMealPlan(today);
+  if (!mp) { store.setMealPlan(today, nutrition.generatePlan(diet, targets, today)); mp = store.getMealPlan(today); }
+  const totals = nutrition.planTotals(mp.plan);
+
+  const cards = mp.plan.map((item, idx) => {
+    const m = nutrition.mealById(item.mealId); if (!m) return "";
+    const s = item.servings;
+    const done = mp.done?.[idx] ? "done" : "";
+    return `<div class="meal-card ${done}">
+      <button class="meal-check ${done}" data-act="meal-done" data-idx="${idx}">✓</button>
+      <div class="meal-main">
+        <div class="meal-slot">${nutrition.SLOT_LABEL[item.slot]}${s !== 1 ? ` · ${s}× serving` : ""}</div>
+        <div class="meal-name">${esc(m.name)}</div>
+        <div class="meal-macros">${Math.round(m.kcal * s)} kcal · ${Math.round(m.p * s)}g protein</div>
+        <div class="meal-ing">${esc(m.ing.join(" · "))}</div>
+      </div>
+      <button class="btn tiny" data-act="swap-meal" data-idx="${idx}">swap</button>
+    </div>`;
+  }).join("");
+
+  $("#view").innerHTML = `
+    <div class="habits-head"><h2 class="screen-title">Eat</h2>
+      <button class="btn" data-act="edit-diet">Diet</button></div>
+    ${macroSummary(totals, targets)}
+    ${cards}
+    <button class="btn full" data-act="regen-plan">↻ Give me a different plan</button>
+    <p class="tdee-note">Tap ✓ as you eat each meal. Swap anything you don't fancy — protein & calories re-total live.</p>
+  `;
+}
+
+function macroSummary(t, target) {
+  const bar = (val, tgt, cls) => `<div class="bar"><div class="bar-fill ${cls}" style="width:${Math.min(100, Math.round(val / tgt * 100))}%"></div></div>`;
+  return `<div class="body-card">
+    <div class="macro-row"><span>Calories</span><span><b>${Math.round(t.kcal)}</b> / ${target.calories}</span></div>
+    ${bar(t.kcal, target.calories, "")}
+    <div class="macro-row"><span>Protein</span><span><b>${Math.round(t.p)}g</b> / ${target.protein}g</span></div>
+    ${bar(t.p, target.protein, "p")}
+    <div class="macro-mini">Carbs ${Math.round(t.c)}g · Fat ${Math.round(t.f)}g</div>
+  </div>`;
+}
+
+function openDietModal() {
+  const d = store.getDiet();
+  const seg = (attr, opts, cur) => opts.map(([v, l]) => `<button type="button" class="seg-btn ${cur === v ? "on" : ""}" data-${attr}="${v}">${l}</button>`).join("");
+  const avoidChips = [["dairy", "Dairy"], ["nuts", "Nuts"], ["gluten", "Gluten"]].map(([v, l]) =>
+    `<button type="button" class="chip ${d.avoid.includes(v) ? "on" : ""}" data-av="${v}">${l}</button>`).join("");
+  openModal(`
+    <h3>Diet preferences</h3>
+    <div class="fld"><span>Diet type</span><div class="seg wrap" id="d-type">${seg("dt", [["omnivore", "Omnivore"], ["vegetarian", "Vegetarian"], ["pescatarian", "Pescatarian"], ["vegan", "Vegan"]], d.type)}</div></div>
+    <div class="fld"><span>Avoid</span><div class="chips">${avoidChips}</div></div>
+    <div class="fld"><span>Meals per day</span><div class="seg wrap" id="d-meals">${seg("dm", [["3", "3 meals"], ["3+snacks", "3 + snacks"], ["2", "2 (skip breakfast)"]], d.mealsPerDay)}</div></div>
+    <div class="modal-actions"><span></span><div>
+      <button class="btn" data-act="close-modal">Cancel</button>
+      <button class="btn primary" data-act="save-diet">Save</button></div></div>
+  `);
+  const modal = $("#modal");
+  let type = d.type, meals = d.mealsPerDay;
+  modal.querySelectorAll("[data-dt]").forEach(b => b.onclick = () => { type = b.dataset.dt; modal.querySelectorAll("[data-dt]").forEach(x => x.classList.toggle("on", x === b)); });
+  modal.querySelectorAll("[data-dm]").forEach(b => b.onclick = () => { meals = b.dataset.dm; modal.querySelectorAll("[data-dm]").forEach(x => x.classList.toggle("on", x === b)); });
+  modal.querySelectorAll(".chip[data-av]").forEach(b => b.onclick = () => b.classList.toggle("on"));
+  modal._collect = () => ({ type, mealsPerDay: meals, avoid: [...modal.querySelectorAll(".chip[data-av].on")].map(x => x.dataset.av) });
+}
+
+// ---------------- SLEEP ----------------
+function renderSleep() {
+  const s = store.getSleep();
+  const today = store.todayKey();
+  const tonight = store.tonightBedtime();
+  const log = store.getSleepLog(today);
+  const series = store.sleepSeries(21);
+  const avgMin = series.length ? Math.round(series.reduce((a, x) => a + x.mins, 0) / series.length) : 0;
+
+  let planStatus;
+  if (!s.currentBed) planStatus = "Set your schedule to start a fix plan";
+  else if (tonight === s.targetBed) planStatus = "🎯 You've reached your target";
+  else planStatus = `shifting earlier toward ${s.targetBed}`;
+
+  const chartSeries = series.map(x => ({ key: x.key, w: Math.round(x.mins / 60 * 10) / 10 }));
+
+  $("#view").innerHTML = `
+    ${subHeader("Sleep")}
+    <div class="body-card">
+      <div class="bc-head"><span>Tonight's target bedtime</span><span class="bc-edit" data-act="edit-sleep">✎ schedule</span></div>
+      <div class="big-weight">${tonight || "—"}</div>
+      <div class="stat-lbl">Wake ${s.targetWake} · ${planStatus}</div>
+    </div>
+    <div class="body-card">
+      <div class="bc-head"><span>Last night</span>${avgMin ? `<span class="bc-sub">avg ${fmtDur(avgMin)}</span>` : ""}</div>
+      ${log && log.bed ? `<div class="big-num">${fmtDur(store.sleepDuration(log.bed, log.wake))}</div><div class="stat-lbl">${log.bed} → ${log.wake}${log.quality ? " · " + ["", "😴 poor", "😐 ok", "😃 great"][log.quality] : ""}</div>` : `<p class="stat-lbl">Not logged yet.</p>`}
+      <button class="btn full" data-act="log-sleep">${log && log.bed ? "Edit last night" : "Log last night"}</button>
+    </div>
+    ${chartSeries.length >= 2 ? miniChart(chartSeries, "hours slept") : ""}
+    ${windDownCard()}
+  `;
+}
+
+function fmtDur(mins) { if (mins == null) return "—"; return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`; }
+
+function windDownCard() {
+  const tips = [
+    "🌅 Bright light within 30–60 min of waking",
+    "☕ Cut caffeine 8–10 hrs before bed",
+    "🍽️ Last big meal ~3 hrs before bed",
+    "📵 30–60 min screen-free wind-down",
+    "❄️ Cool (18°C / 65°F), dark, quiet room",
+    "⏰ Same bed + wake time (±30 min) daily",
+  ];
+  return `<div class="body-card">
+    <div class="bc-head"><span>The sleep protocol</span><span class="bc-sub">evidence-based</span></div>
+    ${tips.map(t => `<div class="tip">${t}</div>`).join("")}</div>`;
+}
+
+function openSleepModal() {
+  const s = store.getSleep();
+  openModal(`
+    <h3>Sleep schedule</h3>
+    <label class="fld"><span>Your current bedtime (roughly)</span><input id="s-cur" type="time" value="${s.currentBed || ""}"/></label>
+    <label class="fld"><span>Target bedtime</span><input id="s-bed" type="time" value="${s.targetBed || "23:00"}"/></label>
+    <label class="fld"><span>Target wake time</span><input id="s-wake" type="time" value="${s.targetWake || "07:00"}"/></label>
+    <div class="note">I'll move your bedtime 15 min earlier every 2 days until you hit the target — no jarring jumps.</div>
+    <div class="modal-actions"><span></span><div>
+      <button class="btn" data-act="close-modal">Cancel</button>
+      <button class="btn primary" data-act="save-sleep">Save</button></div></div>
+  `);
+}
+
+function openSleepLogModal() {
+  const today = store.todayKey();
+  const log = store.getSleepLog(today) || {};
+  const s = store.getSleep();
+  openModal(`
+    <h3>Log last night</h3>
+    <div class="row2">
+      <label class="fld"><span>Fell asleep</span><input id="l-bed" type="time" value="${log.bed || s.targetBed || "23:00"}"/></label>
+      <label class="fld"><span>Woke up</span><input id="l-wake" type="time" value="${log.wake || s.targetWake || "07:00"}"/></label>
+    </div>
+    <div class="fld"><span>Quality</span><div class="seg" id="l-q">${[["1", "😴 Poor"], ["2", "😐 OK"], ["3", "😃 Great"]].map(([v, l]) => `<button type="button" class="seg-btn ${String(log.quality) === v ? "on" : ""}" data-q="${v}">${l}</button>`).join("")}</div></div>
+    <div class="modal-actions"><span></span><div>
+      <button class="btn" data-act="close-modal">Cancel</button>
+      <button class="btn primary" data-act="save-sleep-log">Save</button></div></div>
+  `);
+  const modal = $("#modal");
+  let q = log.quality || null;
+  modal.querySelectorAll("[data-q]").forEach(b => b.onclick = () => { q = Number(b.dataset.q); modal.querySelectorAll("[data-q]").forEach(x => x.classList.toggle("on", x === b)); });
+  modal._collect = () => ({ bed: $("#l-bed").value, wake: $("#l-wake").value, quality: q });
+}
+
+// ---------------- SUPPLEMENTS ----------------
+function renderSupplements() {
+  const names = store.getAllHabits().map(h => h.name.toLowerCase());
+  const inRoutine = (sup) => names.some(n => n.startsWith(sup.name.toLowerCase()));
+
+  const suppCard = (sup) => `<div class="supp">
+    <div class="supp-head"><span class="supp-name">${esc(sup.name)}</span><span class="supp-dose">${esc(sup.dose)}</span></div>
+    <div class="supp-why">${esc(sup.why)}</div>
+    <div class="supp-when">🕐 ${esc(sup.when)}</div>
+    ${sup.caution ? `<div class="supp-caution">⚠️ ${esc(sup.caution)}</div>` : ""}
+    ${sup.blueprint ? `<div class="supp-bp">Also in Bryan Johnson's Blueprint ✓</div>` : ""}
+    <button class="btn tiny ${inRoutine(sup) ? "" : "primary"}" data-act="add-supp" data-id="${sup.id}" ${inRoutine(sup) ? "disabled" : ""}>${inRoutine(sup) ? "✓ In your routine" : "+ Add to daily routine"}</button>
+  </div>`;
+
+  const tierSection = (tier) => {
+    const items = SUPPLEMENTS.filter(s => s.tier === tier);
+    return `<div class="body-card">
+      <div class="bc-head"><span>${TIER_INFO[tier].label}</span></div>
+      <p class="stat-lbl">${TIER_INFO[tier].blurb}</p>
+      ${items.map(suppCard).join("")}</div>`;
+  };
+
+  $("#view").innerHTML = `
+    ${subHeader("Supplements")}
+    ${tierSection("core")}
+    ${tierSection("situational")}
+    <div class="body-card">
+      <div class="bc-head"><span>${TIER_INFO.blueprint.label}</span></div>
+      <p class="stat-lbl">${TIER_INFO.blueprint.blurb}</p>
+      <div class="skip-list">${BLUEPRINT_SKIP.map(x => `<span class="skip-chip">${esc(x)}</span>`).join("")}</div>
+    </div>
+    <p class="tdee-note">⚕️ Educational, not medical advice. Buy third-party tested (NSF / Informed Sport), get basic bloodwork (esp. vitamin D) before loading up, and check with a doctor if you take meds or have any condition.</p>
+  `;
 }
 
 // ---------------- HABITS (manage) ----------------
@@ -694,8 +932,9 @@ function renderHabits() {
   }).join("");
 
   $("#view").innerHTML = `
+    ${subHeader("Habits")}
     <div class="habits-head">
-      <h2 class="screen-title">Habits</h2>
+      <span class="stat-lbl">Your daily habits</span>
       <button class="btn primary" data-act="add">+ Add</button>
     </div>
     ${groups || `<div class="empty"><p>No habits yet.</p></div>`}
@@ -927,6 +1166,58 @@ function onClick(e) {
     }
     case "ex-detail": openExerciseDetail(el.dataset.ex); break;
 
+    // --- more hub ---
+    case "more-nav": moreSub = el.dataset.sub; render(); break;
+    case "more-back": moreSub = null; render(); break;
+
+    // --- eat ---
+    case "goto-body": tab = "body"; render(); break;
+    case "meal-done": store.toggleMealDone(store.todayKey(), +el.dataset.idx); break;
+    case "swap-meal": {
+      const today = store.todayKey();
+      const mp = store.getMealPlan(today); const idx = +el.dataset.idx;
+      const item = mp.plan[idx];
+      store.swapPlanMeal(today, idx, nutrition.swapMeal(item.slot, item.mealId, store.getDiet()));
+      break;
+    }
+    case "regen-plan": {
+      const today = store.todayKey();
+      store.setMealPlan(today, nutrition.generatePlan(store.getDiet(), store.computeTargets(), today, String(Date.now())));
+      toast("Fresh plan");
+      break;
+    }
+    case "edit-diet": openDietModal(); break;
+    case "save-diet": {
+      store.updateDiet($("#modal")._collect());
+      const today = store.todayKey();
+      store.setMealPlan(today, nutrition.generatePlan(store.getDiet(), store.computeTargets(), today));
+      closeModal(); render(); toast("Diet updated");
+      break;
+    }
+
+    // --- sleep ---
+    case "edit-sleep": openSleepModal(); break;
+    case "save-sleep": {
+      const cur = $("#s-cur").value, bed = $("#s-bed").value, wake = $("#s-wake").value;
+      store.updateSleep({ currentBed: cur, targetBed: bed, targetWake: wake, planStart: cur ? store.todayKey() : null });
+      closeModal(); render(); toast("Schedule saved");
+      break;
+    }
+    case "log-sleep": openSleepLogModal(); break;
+    case "save-sleep-log": {
+      store.logSleep(store.todayKey(), $("#modal")._collect());
+      closeModal(); render(); toast("Sleep logged");
+      break;
+    }
+
+    // --- supplements ---
+    case "add-supp": {
+      const sup = SUPPLEMENTS.find(s => s.id === el.dataset.id); if (!sup) break;
+      store.addHabit({ name: `${sup.name} (${sup.dose})`, category: "supplement", timeOfDay: sup.timeOfDay, days: "daily" });
+      render(); toast(`Added ${sup.name}`);
+      break;
+    }
+
     case "add": openEditor(null); break;
     case "edit": openEditor(id); break;
     case "day": showDayDetail(el.dataset.key); break;
@@ -1006,10 +1297,10 @@ function boot() {
     if (e.target.id === "modal-back") closeModal();
   });
   document.querySelectorAll(".nav-btn").forEach(b =>
-    b.addEventListener("click", () => { tab = b.dataset.tab; render(); }));
+    b.addEventListener("click", () => { tab = b.dataset.tab; moreSub = null; render(); }));
   $("#sync-chip").addEventListener("click", openAccount);
 
-  store.onChange(() => { if (tab !== "history") render(); else syncNavAndHeader(); });
+  store.onChange(() => render());
   cloud.onStatus(syncNavAndHeader);
 
   render();

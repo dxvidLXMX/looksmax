@@ -59,12 +59,35 @@ create table if not exists public.workouts (
   updated_at  bigint
 );
 
+-- ---------- sleep logs ----------
+create table if not exists public.sleep_logs (
+  user_id    uuid not null references auth.users (id) on delete cascade,
+  date       text not null,   -- "YYYY-MM-DD"
+  bed        text,            -- "HH:MM"
+  wake       text,            -- "HH:MM"
+  quality    int,
+  updated_at bigint,
+  primary key (user_id, date)
+);
+
+-- ---------- meal plans ----------
+create table if not exists public.meal_plans (
+  user_id    uuid not null references auth.users (id) on delete cascade,
+  date       text not null,   -- "YYYY-MM-DD"
+  plan       jsonb,           -- [{slot, mealId, servings}]
+  done       jsonb,           -- { idx: true }
+  updated_at bigint,
+  primary key (user_id, date)
+);
+
 -- ---------- Row Level Security ----------
 alter table public.habits      enable row level security;
 alter table public.completions enable row level security;
 alter table public.weights     enable row level security;
 alter table public.profiles    enable row level security;
 alter table public.workouts    enable row level security;
+alter table public.sleep_logs  enable row level security;
+alter table public.meal_plans  enable row level security;
 
 -- habits policies
 drop policy if exists "own habits select" on public.habits;
@@ -113,3 +136,19 @@ create policy "own workouts select" on public.workouts for select using (auth.ui
 create policy "own workouts insert" on public.workouts for insert with check (auth.uid() = user_id);
 create policy "own workouts update" on public.workouts for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "own workouts delete" on public.workouts for delete using (auth.uid() = user_id);
+
+-- sleep_logs policies
+drop policy if exists "own sleep select" on public.sleep_logs;
+drop policy if exists "own sleep insert" on public.sleep_logs;
+drop policy if exists "own sleep update" on public.sleep_logs;
+create policy "own sleep select" on public.sleep_logs for select using (auth.uid() = user_id);
+create policy "own sleep insert" on public.sleep_logs for insert with check (auth.uid() = user_id);
+create policy "own sleep update" on public.sleep_logs for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- meal_plans policies
+drop policy if exists "own meals select" on public.meal_plans;
+drop policy if exists "own meals insert" on public.meal_plans;
+drop policy if exists "own meals update" on public.meal_plans;
+create policy "own meals select" on public.meal_plans for select using (auth.uid() = user_id);
+create policy "own meals insert" on public.meal_plans for insert with check (auth.uid() = user_id);
+create policy "own meals update" on public.meal_plans for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
