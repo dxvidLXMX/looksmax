@@ -332,6 +332,16 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 .grocery-empty { font-size: 14px; color: var(--muted); }
 
+/* ---------- water ---------- */
+.water-count { font-size: 14px; font-weight: 700; color: var(--muted); }
+.water-done { color: var(--good); }
+
+/* ---------- recipe ---------- */
+.recipe-steps { margin: 12px 0; }
+.recipe-step { display: flex; gap: 12px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; line-height: 1.5; }
+.recipe-step:first-of-type { border-top: none; }
+.step-num { background: var(--accent); color: #000; font-weight: 800; font-size: 12px; min-width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px; }
+
 /* ---------- skin ---------- */
 .sk-step {
   display: flex; align-items: center; gap: 12px;
@@ -377,6 +387,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .btn.primary { background: linear-gradient(90deg, var(--accent), var(--accent-2)); border: none; color: #08122b; }
 .btn.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
 .btn.danger.ghost { background: transparent; }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--accent); padding-left: 0; }
 
 /* ---------- bottom nav ---------- */
 .bottom-nav {

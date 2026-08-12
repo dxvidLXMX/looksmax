@@ -49,6 +49,7 @@ export function defaultProfile() {
     proteinTarget: null,  // manual override (null = auto)
     diet: { type: "omnivore", avoid: [], mealsPerDay: "3+snacks", cooking: "quick" },
     sleep: { targetBed: "23:00", targetWake: "07:00", currentBed: "", planStart: null },
+    waterTarget: 8,
     updatedAt: 0,
   };
 }
@@ -74,6 +75,7 @@ function normalize(s) {
   s.mealPlans ||= {};               // { "YYYY-MM-DD": { plan:[{slot,mealId,servings}], done:{}, updatedAt } }
   s.sleepLogs ||= {};               // { "YYYY-MM-DD": { bed:"HH:MM", wake:"HH:MM", quality, updatedAt } }
   s.skinLogs ||= {};                // { "YYYY-MM-DD": { condition, acne, oiliness, amDone, pmDone, updatedAt } }
+  s.waterLogs ||= {};               // { "YYYY-MM-DD": { glasses: N, updatedAt } }
   s.groceryChecked ||= {};          // { scopeKey: { itemKey: bool } }
   s.profile = { ...defaultProfile(), ...(s.profile || {}) };
   s.profile.diet = { ...defaultProfile().diet, ...(s.profile.diet || {}) };
@@ -575,6 +577,16 @@ export function toggleGroceryItem(scopeKey, itemKey) {
 }
 export function clearGroceryChecked(scopeKey) {
   if (state.groceryChecked) delete state.groceryChecked[scopeKey];
+  commit({ sync: false });
+}
+
+// ---------- water ----------
+export function getWaterTarget() { return state.profile.waterTarget || 8; }
+export function getWater(key) { return state.waterLogs[key]?.glasses || 0; }
+export function addWater(key, delta) {
+  const cur = state.waterLogs[key]?.glasses || 0;
+  const next = Math.max(0, cur + delta);
+  state.waterLogs[key] = { glasses: next, updatedAt: Date.now() };
   commit({ sync: false });
 }
 

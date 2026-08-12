@@ -119,7 +119,27 @@ function renderToday() {
     </div>
     ${allDone ? `<div class="celebrate">✅ All done for today. Locked in.</div>` : ""}
     ${total === 0 ? emptyToday() : sections}
+    ${renderWaterCard(key)}
   `;
+}
+
+function renderWaterCard(key) {
+  const glasses = store.getWater(key);
+  const target = store.getWaterTarget();
+  const pct = Math.min(100, Math.round(glasses / target * 100));
+  const reached = glasses >= target;
+  return `<div class="body-card water-card">
+    <div class="bc-head">
+      <span>💧 Water</span>
+      <div style="display:flex;align-items:center;gap:8px">
+        ${glasses > 0 ? `<button class="btn tiny" data-act="water-minus">−</button>` : ""}
+        <span class="water-count${reached ? " water-done" : ""}">${glasses} / ${target}</span>
+        <button class="btn tiny primary" data-act="water-plus">+ glass</button>
+      </div>
+    </div>
+    <div class="bar"><div class="bar-fill${reached ? " good" : ""}" style="width:${pct}%"></div></div>
+    ${reached ? `<div class="stat-lbl" style="margin-top:6px">✅ Daily goal reached!</div>` : ""}
+  </div>`;
 }
 
 function emptyToday() {
@@ -650,28 +670,31 @@ function openPlanModal() {
     `<button type="button" class="seg-btn ${cur === v ? "on" : ""}" data-${field}="${v}">${l}</button>`).join("");
   const dayChips = WEEKDAYS.map((w, i) =>
     `<button type="button" class="chip ${t.days.includes(i) ? "on" : ""}" data-pday="${i}">${w}</button>`).join("");
+  const splitOpts = Object.entries(program.SPLITS).map(([id, s]) =>
+    `<button type="button" class="seg-btn ${t.splitId === id ? "on" : ""}" data-split="${id}">${s.name}</button>`).join("");
 
   openModal(`
     <h3>Your plan</h3>
+    <div class="fld"><span>Split</span><div class="seg wrap" id="s-split">${splitOpts}</div></div>
+    <div class="fld"><span>Training days</span><div class="chips">${dayChips}</div></div>
     <div class="fld"><span>Experience</span><div class="seg wrap" id="s-exp">${seg("exp", [["beginner", "Beginner"], ["intermediate", "Intermediate"], ["advanced", "Advanced"]], t.experience)}</div></div>
     <div class="fld"><span>Goal</span><div class="seg wrap" id="s-goal">${seg("goal", [["muscle", "Muscle"], ["strength", "Strength"], ["lean", "Lean"]], t.goal)}</div></div>
     <div class="fld"><span>Equipment</span><div class="seg wrap" id="s-eq">${seg("eq", [["gym", "Full gym"], ["dumbbells", "Dumbbells"], ["barbell", "Barbell"], ["bodyweight", "Bodyweight"]], t.equipment)}</div></div>
-    <div class="fld"><span>Training days</span><div class="chips">${dayChips}</div></div>
-    <div class="note">Currently running: <b>${program.SPLITS[t.splitId]?.name || t.splitId}</b>. (More split options coming.)</div>
     <div class="modal-actions"><span></span><div>
       <button class="btn" data-act="close-modal">Cancel</button>
       <button class="btn primary" data-act="save-plan">Save</button>
     </div></div>
   `);
   const modal = $("#modal");
-  let exp = t.experience, goal = t.goal, eq = t.equipment;
+  let exp = t.experience, goal = t.goal, eq = t.equipment, splitId = t.splitId || "ul4";
   const pick = (attr, set) => modal.querySelectorAll(`[data-${attr}]`).forEach(b => b.onclick = () => {
     modal.querySelectorAll(`[data-${attr}]`).forEach(x => x.classList.toggle("on", x === b)); set(b.dataset[attr]);
   });
   pick("exp", v => exp = v); pick("goal", v => goal = v); pick("eq", v => eq = v);
+  pick("split", v => splitId = v);
   modal.querySelectorAll(".chip[data-pday]").forEach(b => b.onclick = () => b.classList.toggle("on"));
   modal._collect = () => ({
-    experience: exp, goal, equipment: eq,
+    experience: exp, goal, equipment: eq, splitId,
     days: [...modal.querySelectorAll(".chip[data-pday].on")].map(x => Number(x.dataset.pday)).sort((a, b) => a - b),
   });
 }
@@ -747,6 +770,7 @@ function renderEat() {
         <div class="meal-name">${esc(m.name)}</div>
         <div class="meal-macros">${Math.round(m.kcal * s)} kcal · ${Math.round(m.p * s)}g protein</div>
         <div class="meal-ing">${esc(m.ing.join(" · "))}</div>
+        ${m.recipe ? `<button class="btn tiny ghost" data-act="view-recipe" data-id="${m.id}">📋 recipe</button>` : ""}
       </div>
       <button class="btn tiny" data-act="swap-meal" data-idx="${idx}">swap</button>
     </div>`;
@@ -1285,6 +1309,8 @@ function onClick(e) {
       break;
     }
     case "go-habits": tab = "habits"; render(); break;
+    case "water-plus":  store.addWater(store.todayKey(),  1); break;
+    case "water-minus": store.addWater(store.todayKey(), -1); break;
 
     case "log-weight": openWeightModal(); break;
     case "save-weight": {
@@ -1369,6 +1395,21 @@ function onClick(e) {
 
     // --- eat ---
     case "goto-body": tab = "body"; render(); break;
+    case "view-recipe": {
+      const m = nutrition.mealById(el.dataset.id);
+      if (!m?.recipe) break;
+      openModal(`
+        <h3>${esc(m.name)}</h3>
+        <div class="note">⏱ ${esc(m.recipe.prep)} &nbsp;·&nbsp; ${m.kcal} kcal · ${m.p}g protein</div>
+        <div class="recipe-steps">
+          ${m.recipe.steps.map((s, i) => `<div class="recipe-step"><span class="step-num">${i + 1}</span><span>${esc(s)}</span></div>`).join("")}
+        </div>
+        <div class="bc-head" style="margin-top:14px">Ingredients</div>
+        <div class="meal-ing" style="font-size:14px;line-height:1.8">${esc(m.ing.join(" · "))}</div>
+        <div class="modal-actions"><span></span><button class="btn primary" data-act="close-modal">Close</button></div>
+      `);
+      break;
+    }
     case "meal-done": store.toggleMealDone(store.todayKey(), +el.dataset.idx); break;
     case "swap-meal": {
       const today = store.todayKey();

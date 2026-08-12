@@ -37,20 +37,44 @@ export const EXERCISES = {
   lyingLegCurl:      { name: "Lying Leg Curl",          muscle: "Hamstrings", sets: 3, repLow: 10, repHigh: 15, inc: 5 },
   seatedCalfRaise:   { name: "Seated Calf Raise",       muscle: "Calves",     sets: 4, repLow: 12, repHigh: 20, inc: 5 },
   cableCrunch:       { name: "Cable Crunch",            muscle: "Abs",        sets: 3, repLow: 12, repHigh: 15, inc: 5 },
+
+  // PPL / split additions
+  facePull:          { name: "Face Pull",               muscle: "Rear Delts", sets: 3, repLow: 15, repHigh: 20, inc: 5 },
+  hammerCurl:        { name: "Hammer Curl",             muscle: "Biceps",     sets: 3, repLow: 10, repHigh: 15, inc: 5 },
+  hipThrust:         { name: "Hip Thrust",              muscle: "Glutes",     sets: 3, repLow: 8,  repHigh: 12, inc: 10 },
+  cableCrossover:    { name: "Cable Crossover",         muscle: "Chest",      sets: 3, repLow: 12, repHigh: 15, inc: 5 },
+  straightArmDown:   { name: "Straight-Arm Pulldown",  muscle: "Back",       sets: 3, repLow: 12, repHigh: 15, inc: 5 },
+  abWheel:           { name: "Ab Wheel Rollout",        muscle: "Abs",        sets: 3, repLow: 8,  repHigh: 12, inc: 0, unit: "bw" },
 };
 
 // --- day templates ---
 export const TEMPLATES = {
+  // Upper / Lower
   upperA: { name: "Upper A", exercises: ["benchPress", "barbellRow", "dbShoulderPress", "latPulldown", "lateralRaise", "tricepPushdown", "dbCurl"] },
   lowerA: { name: "Lower A", exercises: ["backSquat", "rdl", "legPress", "seatedLegCurl", "calfRaise", "hangingLegRaise"] },
   upperB: { name: "Upper B", exercises: ["inclineDbPress", "pullUp", "overheadPress", "cableRow", "cableFly", "lateralRaise", "inclineDbCurl", "overheadTricepExt"] },
   lowerB: { name: "Lower B", exercises: ["deadlift", "bulgarianSplit", "legExtension", "lyingLegCurl", "seatedCalfRaise", "cableCrunch"] },
+  // Push / Pull / Legs
+  push:   { name: "Push", exercises: ["benchPress", "inclineDbPress", "cableCrossover", "overheadPress", "lateralRaise", "tricepPushdown", "overheadTricepExt"] },
+  pull:   { name: "Pull", exercises: ["deadlift", "barbellRow", "latPulldown", "cableRow", "straightArmDown", "facePull", "dbCurl", "hammerCurl"] },
+  legs:   { name: "Legs", exercises: ["backSquat", "rdl", "legPress", "hipThrust", "legExtension", "seatedLegCurl", "calfRaise", "abWheel"] },
+  // Full Body
+  fullBodyA: { name: "Full Body A", exercises: ["backSquat", "benchPress", "barbellRow", "overheadPress", "rdl", "dbCurl", "tricepPushdown"] },
+  fullBodyB: { name: "Full Body B", exercises: ["deadlift", "inclineDbPress", "latPulldown", "dbShoulderPress", "bulgarianSplit", "hammerCurl", "overheadTricepExt"] },
+  // Bro Split
+  chest:     { name: "Chest", exercises: ["benchPress", "inclineDbPress", "cableCrossover", "cableFly", "overheadTricepExt"] },
+  back:      { name: "Back",  exercises: ["deadlift", "barbellRow", "latPulldown", "cableRow", "pullUp", "facePull"] },
+  shoulders: { name: "Shoulders", exercises: ["overheadPress", "dbShoulderPress", "lateralRaise", "facePull", "cableCrunch"] },
+  armsDay:   { name: "Arms", exercises: ["dbCurl", "inclineDbCurl", "hammerCurl", "tricepPushdown", "overheadTricepExt", "abWheel"] },
+  legsDay:   { name: "Legs", exercises: ["backSquat", "rdl", "legPress", "hipThrust", "legExtension", "seatedLegCurl", "calfRaise"] },
 };
 
 // --- splits: ordered template sequence mapped onto the chosen training weekdays ---
 export const SPLITS = {
-  ul4:  { name: "Upper / Lower (4-day)", order: ["upperA", "lowerA", "upperB", "lowerB"] },
-  ppl3: { name: "Push / Pull / Legs (3-day)", order: ["upperA", "lowerA", "upperB"] }, // fallback simplification
+  ul4:  { name: "Upper / Lower (4-day)", order: ["upperA", "lowerA", "upperB", "lowerB"], recommended: 4 },
+  ppl3: { name: "Push / Pull / Legs",    order: ["push", "pull", "legs"],                 recommended: 3 },
+  fb3:  { name: "Full Body (3-day)",     order: ["fullBodyA", "fullBodyB", "fullBodyA"],  recommended: 3 },
+  bro5: { name: "Bro Split (5-day)",     order: ["chest", "back", "shoulders", "armsDay", "legsDay"], recommended: 5 },
 };
 
 export function getExercise(id) { return EXERCISES[id] || { name: id, sets: 3, repLow: 8, repHigh: 12, inc: 5 }; }
