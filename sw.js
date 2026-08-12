@@ -1,5 +1,5 @@
 // Service worker — offline app shell (cache-first for local files).
-const CACHE = "looksmax-v4";
+const CACHE = "looksmax-v5";
 const ASSETS = [
   "./",
   "./index.html",
