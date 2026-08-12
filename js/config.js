@@ -13,7 +13,7 @@
 // Leaving these blank keeps the app fully local (data on this device).
 // ------------------------------------------------------------
 
-export const SUPABASE_URL = "";      // e.g. "https://abcd1234.supabase.co"
-export const SUPABASE_ANON_KEY = ""; // e.g. "eyJhbGciOi..."
+export const SUPABASE_URL = "https://puassckgbtzoupucmqxc.supabase.co";
+export const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB1YXNzY2tnYnR6b3VwdWNtcXhjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0ODU3NzEsImV4cCI6MjEwMjA2MTc3MX0.IKlHs9s8czSB7GVNu1q5j5NVW3epucEbHvCpP9G30V8";
 
 export const CLOUD_ENABLED = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
