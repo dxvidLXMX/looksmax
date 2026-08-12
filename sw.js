@@ -31,13 +31,20 @@ self.addEventListener("activate", (e) => {
 
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
-  // Only handle same-origin GETs from cache; everything else (Supabase, CDN) goes to network.
+  // Only handle same-origin GETs; everything else (Supabase, CDN) goes straight to network.
   if (e.request.method !== "GET" || url.origin !== self.location.origin) return;
+
+  // Stale-while-revalidate: respond from cache immediately, refresh cache in background.
+  // Next load always gets the latest version without needing a SW version bump.
   e.respondWith(
-    caches.match(e.request).then(hit => hit || fetch(e.request).then(res => {
-      const copy = res.clone();
-      caches.open(CACHE).then(c => c.put(e.request, copy)).catch(() => {});
-      return res;
-    }).catch(() => caches.match("./index.html")))
+    caches.open(CACHE).then(cache => {
+      return cache.match(e.request).then(cached => {
+        const networkFetch = fetch(e.request).then(res => {
+          if (res.ok) cache.put(e.request, res.clone());
+          return res;
+        }).catch(() => cached || caches.match("./index.html"));
+        return cached || networkFetch;
+      });
+    })
   );
 });
