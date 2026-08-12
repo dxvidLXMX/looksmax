@@ -19,6 +19,22 @@ function emit() { for (const fn of listeners) fn(); }
 let syncHook = null;
 export function setSyncHook(fn) { syncHook = fn; }
 
+export function defaultSkinProfile() {
+  return {
+    amSteps: [
+      { id: "cleanser-am", name: "Cleanser", product: "" },
+      { id: "niacinamide", name: "Niacinamide / Toner", product: "" },
+      { id: "moisturizer-am", name: "Moisturizer", product: "" },
+      { id: "spf", name: "Sunscreen (SPF 50+)", product: "" },
+    ],
+    pmSteps: [
+      { id: "cleanser-pm", name: "Double Cleanse", product: "" },
+      { id: "treatment", name: "Active (Retinol / AHA)", product: "" },
+      { id: "moisturizer-pm", name: "Night Moisturizer", product: "" },
+    ],
+  };
+}
+
 export function defaultProfile() {
   return {
     units: "lb",          // "lb" | "kg"
@@ -57,10 +73,12 @@ function normalize(s) {
   s.workouts ||= {};                // { [id]: { id, date, templateId, entries, notes, updatedAt, deleted } }
   s.mealPlans ||= {};               // { "YYYY-MM-DD": { plan:[{slot,mealId,servings}], done:{}, updatedAt } }
   s.sleepLogs ||= {};               // { "YYYY-MM-DD": { bed:"HH:MM", wake:"HH:MM", quality, updatedAt } }
+  s.skinLogs ||= {};                // { "YYYY-MM-DD": { condition, acne, oiliness, amDone, pmDone, updatedAt } }
   s.groceryChecked ||= {};          // { scopeKey: { itemKey: bool } }
   s.profile = { ...defaultProfile(), ...(s.profile || {}) };
   s.profile.diet = { ...defaultProfile().diet, ...(s.profile.diet || {}) };
   s.profile.sleep = { ...defaultProfile().sleep, ...(s.profile.sleep || {}) };
+  if (!s.profile.skin) s.profile.skin = defaultSkinProfile();
   s.training = { ...defaultTraining(), ...(s.training || {}) };
   s.meta ||= { installedAt: Date.now() };
   return s;
@@ -557,6 +575,38 @@ export function toggleGroceryItem(scopeKey, itemKey) {
 }
 export function clearGroceryChecked(scopeKey) {
   if (state.groceryChecked) delete state.groceryChecked[scopeKey];
+  commit({ sync: false });
+}
+
+// ---------- skin ----------
+export function getSkin() { return state.profile.skin; }
+export function updateSkin(patch) {
+  state.profile = { ...state.profile, skin: { ...state.profile.skin, ...patch }, updatedAt: Date.now() };
+  commit();
+  return state.profile.skin;
+}
+export function logSkinDay(key, data) {
+  state.skinLogs[key] = { ...state.skinLogs[key], ...data, updatedAt: Date.now() };
+  commit();
+}
+export function getSkinLog(key) { return state.skinLogs[key] || null; }
+// last n days with a condition logged, oldest first
+export function skinSeries(days = 30) {
+  const out = [];
+  let key = todayKey();
+  for (let i = 0; i < days; i++) {
+    const log = state.skinLogs[key];
+    if (log && log.condition) out.push({ key, w: log.condition });
+    key = addDays(key, -1);
+  }
+  return out.reverse();
+}
+export function toggleSkinStep(key, period, stepId) {
+  const log = (state.skinLogs[key] ||= {});
+  const field = period === "am" ? "amDone" : "pmDone";
+  log[field] ||= {};
+  log[field][stepId] = !log[field][stepId];
+  log.updatedAt = Date.now();
   commit({ sync: false });
 }
 

@@ -29,6 +29,7 @@ function render() {
 }
 
 function renderMore() {
+  if (moreSub === "skin") return renderSkin();
   if (moreSub === "sleep") return renderSleep();
   if (moreSub === "supplements") return renderSupplements();
   if (moreSub === "history") return renderHistory();
@@ -45,6 +46,7 @@ function renderMoreMenu() {
       <span class="hb-edit">›</span></div>`;
   $("#view").innerHTML = `
     <h2 class="screen-title">More</h2>
+    ${item("skin", "🪞", "Skin", "Daily check-in + AM/PM routine")}
     ${item("sleep", "😴", "Sleep", "Fix your schedule + log sleep")}
     ${item("supplements", "💊", "Supplements", "Your evidence-based stack")}
     ${item("history", "📊", "History", "Habit consistency heatmap")}
@@ -838,6 +840,155 @@ function openDietModal() {
   modal._collect = () => ({ type, mealsPerDay: meals, avoid: [...modal.querySelectorAll(".chip[data-av].on")].map(x => x.dataset.av) });
 }
 
+// ---------------- SKIN ----------------
+const COND_EMOJI  = ["", "😖", "😕", "😐", "🙂", "😊"];
+const COND_LABEL  = ["", "Bad day", "Rough", "Okay", "Good", "Great!"];
+const ACNE_LABEL  = { clear: "✨ Clear", mild: "🔴 Mild", moderate: "🟠 Moderate", bad: "🔴🔴 Bad" };
+const OIL_LABEL   = ["", "Normal", "Oily", "Very oily"];
+
+function renderSkin() {
+  const today = store.todayKey();
+  const log = store.getSkinLog(today);
+  const skin = store.getSkin();
+  const series = store.skinSeries(30);
+
+  const todayLogged = log && log.condition;
+  const checkInCard = `<div class="body-card">
+    <div class="bc-head"><span>Today's skin</span>${todayLogged ? `<span class="bc-edit" data-act="skin-checkin">✎ edit</span>` : ""}</div>
+    ${todayLogged
+      ? `<div class="stat-row three">
+          <div class="stat"><div class="stat-n">${COND_EMOJI[log.condition]}</div><div class="stat-l">${COND_LABEL[log.condition]}</div></div>
+          <div class="stat"><div class="stat-n" style="font-size:13px">${ACNE_LABEL[log.acne] || "—"}</div><div class="stat-l">acne</div></div>
+          <div class="stat"><div class="stat-n" style="font-size:13px">${OIL_LABEL[log.oiliness] || "—"}</div><div class="stat-l">oiliness</div></div>
+        </div>`
+      : `<p class="stat-lbl">Tap to log how your skin looks today.</p>
+         <button class="btn primary full" data-act="skin-checkin">Log today's skin</button>`
+    }
+  </div>`;
+
+  const routineCard = (period, steps, label) => {
+    const doneMap = log?.[period === "am" ? "amDone" : "pmDone"] || {};
+    const doneCount = steps.filter(s => doneMap[s.id]).length;
+    const rows = steps.map(s => {
+      const done = !!doneMap[s.id];
+      return `<div class="sk-step ${done ? "done" : ""}" data-act="skin-step" data-period="${period}" data-step="${s.id}">
+        <span class="sk-check">${done ? "✓" : ""}</span>
+        <span class="sk-info">
+          <span class="sk-name">${esc(s.name)}</span>
+          ${s.product ? `<span class="sk-prod">${esc(s.product)}</span>` : ""}
+        </span>
+      </div>`;
+    }).join("");
+    return `<div class="body-card">
+      <div class="bc-head">
+        <span>${label} <span class="bc-sub">${doneCount}/${steps.length}</span></span>
+        <span class="bc-edit" data-act="edit-skin-routine" data-period="${period}">✎ products</span>
+      </div>
+      ${rows}
+    </div>`;
+  };
+
+  const skinTips = [
+    "☀️ SPF 50+ every morning — the #1 anti-aging and anti-acne move",
+    "💧 Niacinamide (10%) reduces sebum, pores, and hyperpigmentation",
+    "🌙 Retinol at night (start 2× / week) — proven for skin quality long-term",
+    "🚿 Wash pillowcase weekly — bacteria buildup causes breakouts",
+    "🚫 Hands off your face — transferring bacteria causes new pimples",
+    "🧴 Don't layer vitamin C + niacinamide + retinol all at once",
+    "💦 Stay hydrated — dehydrated skin overproduces oil",
+  ];
+
+  $("#view").innerHTML = `
+    ${subHeader("Skin")}
+    ${checkInCard}
+    ${routineCard("am", skin.amSteps, "☀️ Morning routine")}
+    ${routineCard("pm", skin.pmSteps, "🌙 Evening routine")}
+    ${series.length >= 2 ? miniChart(series, "skin condition (1–5)") : ""}
+    <div class="body-card">
+      <div class="bc-head"><span>The skin protocol</span><span class="bc-sub">evidence-based</span></div>
+      ${skinTips.map(t => `<div class="tip">${t}</div>`).join("")}
+    </div>
+  `;
+}
+
+function openSkinCheckInModal() {
+  const today = store.todayKey();
+  const log = store.getSkinLog(today) || {};
+  openModal(`
+    <h3>Today's skin check-in</h3>
+    <div class="fld"><span>Overall condition</span>
+      <div class="seg wrap" id="sk-cond">
+        ${COND_EMOJI.slice(1).map((e, i) => `<button type="button" class="seg-btn${log.condition === i + 1 ? " on" : ""}" data-cond="${i + 1}">${e} ${i + 1}</button>`).join("")}
+      </div>
+    </div>
+    <div class="fld"><span>Acne</span>
+      <div class="seg wrap" id="sk-acne">
+        ${[["clear", "✨ Clear"], ["mild", "🔴 Mild"], ["moderate", "🟠 Moderate"], ["bad", "🔴🔴 Bad"]].map(([v, l]) =>
+          `<button type="button" class="seg-btn${log.acne === v ? " on" : ""}" data-acne="${v}">${l}</button>`).join("")}
+      </div>
+    </div>
+    <div class="fld"><span>Oiliness</span>
+      <div class="seg" id="sk-oil">
+        ${[["1", "Normal"], ["2", "Oily"], ["3", "Very oily"]].map(([v, l]) =>
+          `<button type="button" class="seg-btn${String(log.oiliness) === v ? " on" : ""}" data-oil="${v}">${l}</button>`).join("")}
+      </div>
+    </div>
+    <div class="modal-actions"><span></span><div>
+      <button class="btn" data-act="close-modal">Cancel</button>
+      <button class="btn primary" data-act="save-skin-log">Save</button>
+    </div></div>
+  `);
+  const modal = $("#modal");
+  let condition = log.condition || null, acne = log.acne || null, oiliness = log.oiliness || null;
+  modal.querySelectorAll("[data-cond]").forEach(b => b.onclick = () => {
+    condition = Number(b.dataset.cond);
+    modal.querySelectorAll("[data-cond]").forEach(x => x.classList.toggle("on", x === b));
+  });
+  modal.querySelectorAll("[data-acne]").forEach(b => b.onclick = () => {
+    acne = b.dataset.acne;
+    modal.querySelectorAll("[data-acne]").forEach(x => x.classList.toggle("on", x === b));
+  });
+  modal.querySelectorAll("[data-oil]").forEach(b => b.onclick = () => {
+    oiliness = Number(b.dataset.oil);
+    modal.querySelectorAll("[data-oil]").forEach(x => x.classList.toggle("on", x === b));
+  });
+  modal._collect = () => ({ condition, acne, oiliness: oiliness || null });
+}
+
+function openSkinRoutineModal(period) {
+  const skin = store.getSkin();
+  const steps = period === "am" ? skin.amSteps : skin.pmSteps;
+  const label = period === "am" ? "☀️ Morning" : "🌙 Evening";
+  openModal(`
+    <h3>${label} routine — products</h3>
+    <p class="stat-lbl" style="margin-top:0;margin-bottom:14px">Enter what you actually use for each step (optional).</p>
+    ${steps.map((s, i) => `
+      <label class="fld">
+        <span>${esc(s.name)}</span>
+        <input type="text" class="sk-prod-input" data-si="${i}" value="${esc(s.product)}" placeholder="e.g. CeraVe Foaming Cleanser"/>
+      </label>`).join("")}
+    <div class="modal-actions"><span></span><div>
+      <button class="btn" data-act="close-modal">Cancel</button>
+      <button class="btn primary" data-act="save-skin-routine" data-period="${period}">Save</button>
+    </div></div>
+  `);
+}
+
+function markSkinHabit(date, period) {
+  if (period !== "am") return;
+  const skin = store.getSkin();
+  const log = store.getSkinLog(date);
+  const allDone = skin.amSteps.every(s => log?.amDone?.[s.id]);
+  if (!allDone) return;
+  for (const h of store.getActiveHabits()) {
+    const name = h.name.toLowerCase();
+    if ((name.includes("skin") || name.includes("cleanser")) && h.timeOfDay === "morning"
+        && store.isScheduled(h, date) && !store.isDone(h.id, date)) {
+      store.setCompletion(h.id, date, true);
+    }
+  }
+}
+
 // ---------------- SLEEP ----------------
 function renderSleep() {
   const s = store.getSleep();
@@ -1250,6 +1401,34 @@ function onClick(e) {
       const today = store.todayKey();
       store.setMealPlan(today, nutrition.generatePlan(store.getDiet(), store.computeTargets(), today));
       closeModal(); render(); toast("Diet updated");
+      break;
+    }
+
+    // --- skin ---
+    case "skin-checkin": openSkinCheckInModal(); break;
+    case "save-skin-log": {
+      const data = $("#modal")._collect();
+      if (!data.condition) { toast("Pick a condition rating"); return; }
+      store.logSkinDay(store.todayKey(), data);
+      closeModal(); render(); toast("Logged ✓");
+      break;
+    }
+    case "skin-step": {
+      const today = store.todayKey();
+      store.toggleSkinStep(today, el.dataset.period, el.dataset.step);
+      markSkinHabit(today, el.dataset.period);
+      break;
+    }
+    case "edit-skin-routine": openSkinRoutineModal(el.dataset.period); break;
+    case "save-skin-routine": {
+      const period = el.dataset.period;
+      const skin = store.getSkin();
+      const steps = (period === "am" ? [...skin.amSteps] : [...skin.pmSteps]).map((s, i) => ({ ...s }));
+      $("#modal").querySelectorAll(".sk-prod-input").forEach(inp => {
+        steps[+inp.dataset.si].product = inp.value.trim();
+      });
+      store.updateSkin(period === "am" ? { amSteps: steps } : { pmSteps: steps });
+      closeModal(); render(); toast("Saved");
       break;
     }
 
