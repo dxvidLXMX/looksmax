@@ -13,6 +13,7 @@ const esc = (s) => String(s).replace(/[&<>"']/g, c =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 let tab = "today";
+let groceryMode = null; // null = hidden, "today" | "week"
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 // ---------------- shell ----------------
@@ -749,12 +750,18 @@ function renderEat() {
     </div>`;
   }).join("");
 
+  const grocerySection = groceryMode ? renderGroceryList(groceryMode, diet, targets, today) : "";
+
   $("#view").innerHTML = `
     <div class="habits-head"><h2 class="screen-title">Eat</h2>
-      <button class="btn" data-act="edit-diet">Diet</button></div>
+      <div style="display:flex;gap:6px">
+        <button class="btn" data-act="grocery-toggle">🛒${groceryMode ? " ▲" : ""}</button>
+        <button class="btn" data-act="edit-diet">Diet</button>
+      </div></div>
     ${macroSummary(totals, targets)}
     ${cards}
     <button class="btn full" data-act="regen-plan">↻ Give me a different plan</button>
+    ${grocerySection}
     <p class="tdee-note">Tap ✓ as you eat each meal. Swap anything you don't fancy — protein & calories re-total live.</p>
   `;
 }
@@ -767,6 +774,45 @@ function macroSummary(t, target) {
     <div class="macro-row"><span>Protein</span><span><b>${Math.round(t.p)}g</b> / ${target.protein}g</span></div>
     ${bar(t.p, target.protein, "p")}
     <div class="macro-mini">Carbs ${Math.round(t.c)}g · Fat ${Math.round(t.f)}g</div>
+  </div>`;
+}
+
+function renderGroceryList(mode, diet, targets, today) {
+  const scopeKey = `${mode}-${today}`;
+  const checked = store.getGroceryChecked(scopeKey);
+
+  const groups = mode === "week"
+    ? nutrition.weeklyGroceryGroups(diet, targets, today)
+    : (() => { const mp = store.getMealPlan(today); return mp ? nutrition.groceryGroups(mp.plan) : []; })();
+
+  const checkedCount = Object.values(checked).filter(Boolean).length;
+  const totalCount = groups.reduce((a, g) => a + g.items.length, 0);
+
+  const catsHtml = groups.map(g => `
+    <div class="grocery-cat">
+      <div class="grocery-cat-head">${g.icon} ${g.cat}</div>
+      ${g.items.map(item => {
+        const done = !!checked[item.key];
+        const badge = item.days > 1
+          ? `<span class="grocery-badge">${mode === "week" ? `×${item.days} servings` : `×${item.days}`}</span>`
+          : "";
+        return `<div class="grocery-item${done ? " done" : ""}" data-act="grocery-check" data-scope="${esc(scopeKey)}" data-key="${esc(item.key)}">
+          <span class="grocery-cb">${done ? "✓" : ""}</span>
+          <span class="grocery-text">${esc(item.text)}${badge}</span>
+        </div>`;
+      }).join("")}
+    </div>`).join("");
+
+  return `<div class="grocery-section">
+    <div class="grocery-head">
+      <span class="grocery-title">Grocery list${checkedCount ? ` <span class="grocery-prog">${checkedCount}/${totalCount}</span>` : ""}</span>
+      <div class="seg grocery-seg">
+        <button class="seg-btn${mode === "today" ? " on" : ""}" data-act="grocery-mode" data-mode="today">Today</button>
+        <button class="seg-btn${mode === "week" ? " on" : ""}" data-act="grocery-mode" data-mode="week">Week</button>
+      </div>
+      <button class="btn tiny" data-act="grocery-clear" data-scope="${esc(scopeKey)}">Clear ✓</button>
+    </div>
+    ${catsHtml || '<p class="grocery-empty">No plan generated yet.</p>'}
   </div>`;
 }
 
@@ -1186,6 +1232,18 @@ function onClick(e) {
       toast("Fresh plan");
       break;
     }
+    case "grocery-toggle":
+      groceryMode = groceryMode ? null : "today";
+      render(); break;
+    case "grocery-mode":
+      groceryMode = el.dataset.mode;
+      render(); break;
+    case "grocery-check":
+      store.toggleGroceryItem(el.dataset.scope, el.dataset.key);
+      break;
+    case "grocery-clear":
+      store.clearGroceryChecked(el.dataset.scope);
+      break;
     case "edit-diet": openDietModal(); break;
     case "save-diet": {
       store.updateDiet($("#modal")._collect());

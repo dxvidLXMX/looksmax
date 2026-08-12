@@ -14,7 +14,7 @@ export const MEALS = {
     { id: "eggCheeseWrap", name: "Egg & cheese breakfast wrap", kcal: 420, p: 26, c: 34, f: 20, quick: true, flags: ["egg", "dairy"], contains: ["dairy", "gluten"], ing: ["2 eggs", "cheese 30g", "tortilla wrap", "spinach"] },
   ],
   lunch: [
-    { id: "chickenRiceBowl", name: "Chicken + rice + veg bowl", kcal: 550, p: 45, c: 60, f: 12, quick: true, flags: ["meat"], contains: [], ing: ["chicken breast 180g", "cooked rice 200g", "mixed veg", "olive oil 1 tsp"] },
+    { id: "chickenRiceBowl", name: "Chicken + rice + veg bowl", kcal: 550, p: 45, c: 60, f: 12, quick: true, flags: ["meat"], contains: [], ing: ["chicken breast 180g", "rice 200g", "mixed veg", "olive oil 1 tsp"] },
     { id: "turkeySandwich", name: "Turkey & salad sandwich", kcal: 480, p: 35, c: 48, f: 15, quick: true, flags: ["meat"], contains: ["gluten"], ing: ["turkey 150g", "wholegrain bread", "salad", "light mayo"] },
     { id: "tunaPasta", name: "Tuna pasta", kcal: 560, p: 40, c: 70, f: 12, quick: true, flags: ["fish"], contains: ["gluten"], ing: ["tuna 2 tins", "pasta 90g dry", "sweetcorn", "light mayo"] },
     { id: "burritoBowl", name: "Beef & bean burrito bowl", kcal: 620, p: 42, c: 62, f: 20, quick: true, flags: ["meat"], contains: [], ing: ["lean beef mince 150g", "black beans", "rice 150g", "salsa"] },
@@ -132,3 +132,78 @@ export function swapMeal(slot, currentId, diet) {
 }
 
 export const SLOT_LABEL = { breakfast: "Breakfast", lunch: "Lunch", dinner: "Dinner", snack: "Snack" };
+
+// ──────────── Grocery list ────────────
+
+const GROCERY_CATS = [
+  { cat: "Grains",   icon: "🌾", words: ["oat", "bread", "tortilla", "pasta", "rice", "noodle", "couscous", "granola", "toast", "wrap"] },
+  { cat: "Produce",  icon: "🥬", words: ["berr", "banana", "apple", "broccoli", "veg", "salad", "spinach", "avocado", "potato", "fruit", "sweetcorn", "bean"] },
+  { cat: "Dairy",    icon: "🥛", words: ["yogurt", "milk", "cheese", "parmesan", "feta"] },
+  { cat: "Protein",  icon: "🥩", words: ["chicken", "beef", "salmon", "tuna", "turkey", "mince", "steak", "sirloin", "jerky", "whey", "egg", "cottage"] },
+  { cat: "Pantry",   icon: "🫙", words: ["oil", "sauce", "honey", "peanut", "mayo", "salsa", "nut", "almond"] },
+];
+const CAT_ORDER = ["Protein", "Produce", "Dairy", "Grains", "Pantry", "Other"];
+
+function ingCat(text) {
+  const lo = text.toLowerCase();
+  for (const c of GROCERY_CATS) if (c.words.some(w => lo.includes(w))) return c;
+  return { cat: "Other", icon: "🛒" };
+}
+
+// stable dedup key: strip leading numbers + common quantity units
+export function ingKey(text) {
+  return text.toLowerCase()
+    .replace(/\b\d+\s*(g|ml|kg|oz|lb|tbsp|tsp|tins?|cans?|scoops?|slices?|pot)\b/gi, "")
+    .replace(/^\d+[\s\-–]*/u, "")
+    .replace(/[×x]\d+(\.\d+)?/g, "")
+    .replace(/\b(cooked|dry|raw|light|mixed|lean)\b/g, "")
+    .replace(/\s+/g, " ").trim();
+}
+
+function keyDateAdd(key, n) {
+  const [y, m, d] = key.split("-").map(Number);
+  const dt = new Date(y, m - 1, d + n);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+
+function planToIngMap(plan) {
+  const map = {};
+  for (const p of plan) {
+    const m = mealById(p.mealId); if (!m) continue;
+    for (const ing of m.ing) {
+      const k = ingKey(ing);
+      const { cat, icon } = ingCat(ing);
+      const gk = `${cat}::${k}`;
+      if (!map[gk]) map[gk] = { text: ing, cat, icon, days: 0, key: k };
+      map[gk].days++;
+    }
+  }
+  return map;
+}
+
+function groupedFromMap(map) {
+  const cats = {};
+  for (const v of Object.values(map)) {
+    if (!cats[v.cat]) cats[v.cat] = { cat: v.cat, icon: v.icon, items: [] };
+    cats[v.cat].items.push(v);
+  }
+  return CAT_ORDER.filter(c => cats[c]).map(c => cats[c]);
+}
+
+// groups for a single day's plan
+export function groceryGroups(plan) {
+  return groupedFromMap(planToIngMap(plan));
+}
+
+// aggregated groups across 7 days from startKey
+export function weeklyGroceryGroups(diet, targets, startKey) {
+  const merged = {};
+  for (let d = 0; d < 7; d++) {
+    const dayMap = planToIngMap(generatePlan(diet, targets, keyDateAdd(startKey, d)));
+    for (const [k, v] of Object.entries(dayMap)) {
+      if (!merged[k]) merged[k] = { ...v, days: 0 };
+      merged[k].days += v.days;
+    }
+  }
+  return groupedFromMap(merged);
+}

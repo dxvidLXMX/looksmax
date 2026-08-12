@@ -57,6 +57,7 @@ function normalize(s) {
   s.workouts ||= {};                // { [id]: { id, date, templateId, entries, notes, updatedAt, deleted } }
   s.mealPlans ||= {};               // { "YYYY-MM-DD": { plan:[{slot,mealId,servings}], done:{}, updatedAt } }
   s.sleepLogs ||= {};               // { "YYYY-MM-DD": { bed:"HH:MM", wake:"HH:MM", quality, updatedAt } }
+  s.groceryChecked ||= {};          // { scopeKey: { itemKey: bool } }
   s.profile = { ...defaultProfile(), ...(s.profile || {}) };
   s.profile.diet = { ...defaultProfile().diet, ...(s.profile.diet || {}) };
   s.profile.sleep = { ...defaultProfile().sleep, ...(s.profile.sleep || {}) };
@@ -543,6 +544,20 @@ export function timeToMin(t) { const [h, m] = t.split(":").map(Number); return h
 export function minToTime(mins) {
   mins = ((mins % 1440) + 1440) % 1440;
   return `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
+}
+
+// ---------- grocery checklist ----------
+export function getGroceryChecked(scopeKey) {
+  return state.groceryChecked?.[scopeKey] || {};
+}
+export function toggleGroceryItem(scopeKey, itemKey) {
+  (state.groceryChecked ||= {})[scopeKey] ||= {};
+  state.groceryChecked[scopeKey][itemKey] = !state.groceryChecked[scopeKey][itemKey];
+  commit({ sync: false });
+}
+export function clearGroceryChecked(scopeKey) {
+  if (state.groceryChecked) delete state.groceryChecked[scopeKey];
+  commit({ sync: false });
 }
 
 // ---------- raw access for sync layer ----------
