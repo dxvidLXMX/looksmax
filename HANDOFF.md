@@ -1,9 +1,9 @@
 # Looksmax App — Agent Handoff
 
-**Date:** 2026-08-11  
-**App URL:** https://dxvidlxmx.github.io/looksmax/  
-**GitHub:** https://github.com/dxvidLXMX/looksmax  
-**Supabase project:** https://puassckgbtzoupucmqxc.supabase.co  
+**Date:** 2026-08-15
+**App URL:** https://dxvidlxmx.github.io/looksmax/
+**GitHub:** https://github.com/dxvidLXMX/looksmax
+**Supabase project:** https://puassckgbtzoupucmqxc.supabase.co
 **Working directory:** `O:\Claude saves\looksmax-app`
 
 ---
@@ -16,27 +16,28 @@ A personal looksmaxing / self-improvement PWA for David. Local-first vanilla JS,
 
 ---
 
-## What's been built (all shipped to GitHub)
+## Full feature list (all shipped)
 
-### Session 1 (previous export)
-| Tab | What it does |
-|-----|-------------|
-| **Today** | Daily habit tracker — preloaded looksmaxing habits (skincare, sunscreen, supplements, gym, water, sleep), streak counter, completion rings |
-| **Gym** | Training program — beginner/intermediate/advanced, muscle/strength/lean goals, gym/dumbbells/bodyweight/barbell splits, live workout session with rest timer, e1RM tracking, PR detection |
-| **Eat** | Meal planner — generates breakfast/lunch/dinner/snacks from calorie + protein targets (set in Body tab), swap meals, tap ✓ as you eat, macros re-total live |
-| **Body** | Weight tracking — log weigh-ins, trend chart, TDEE calculator (Mifflin-St Jeor), goal mode (lose/maintain/gain), ETA to goal |
-| **More hub** | Container for: Sleep, Supplements, History, Habits manager, Account & sync |
-| **Sleep** | Gradual schedule fixer (15 min shift every 2 days), tonight's target bedtime, sleep log + trend, evidence-based checklist |
-| **Supplements** | Evidence-tiered stack — Core (creatine, D3, omega-3, magnesium, whey), Situational (zinc, melatonin, L-theanine), Blueprint-skip list. One tap adds any to daily habits |
+### Bottom nav tabs: Today · Gym · Eat · Body · More
 
-### Session 2 (this session)
-- **Grocery list** added to Eat tab — 🛒 button in header toggles it open
-  - **Today mode:** aggregates + deduplicates all ingredients from today's plan, grouped by category (Protein 🥩, Produce 🥬, Dairy 🥛, Grains 🌾, Pantry 🫙)
-  - **Week mode:** generates 7 days of deterministic meal plans, shows each ingredient once with `×N servings` badge
-  - Tap to check off items, progress counter (e.g. `1/14`), Clear ✓ button
-  - Checked state persists in localStorage
-- **Supabase cloud sync configured** — keys added to `js/config.js`, schema already deployed to Supabase
-- **Service worker fixed** — was cache-first (v4), never updated. Bumped to v5 + switched to **stale-while-revalidate** (serves cache instantly, fetches fresh in background, next load gets update automatically)
+| Tab | Features |
+|-----|----------|
+| **Today** | Daily habit tracker (Morning/Evening/Anytime), progress ring, streak counter, **💧 Water tracker** (glass counter, + / − buttons, 8-glass default, progress bar) |
+| **Gym** | Program coach, 4 splits (Upper/Lower, PPL, Full Body, Bro Split), double-progression, live session logger, rest timer, PR detection, per-exercise strength chart |
+| **Eat** | Meal plan generator (12 options/slot), swap meals, ✓ as you eat, macro bars, diet settings, 🛒 grocery list (today + week mode), **📋 recipe modal** on every meal |
+| **Body** | Weight log, SVG trend chart, TDEE calculator, goal mode (lose/maintain/gain), ETA to target |
+| **More** | Hub: Skin, Sleep, Supplements, History, Habits, Account |
+
+### More hub sub-screens
+
+| Sub | Features |
+|-----|----------|
+| **Skin** | Daily check-in (condition 1–5, acne, oiliness), AM/PM routine tracker (tap to check off steps), editable product names, 30-day trend chart, tips |
+| **Sleep** | Gradual schedule fixer (15 min/2 days), tonight's target, sleep log (bed/wake/quality), hours-slept trend chart, tips |
+| **Supplements** | Evidence-tiered stack (Core/Situational/Blueprint-skip), one-tap add to habits |
+| **History** | GitHub-style heatmap (12 weeks), 30-day avg, perfect days |
+| **Habits** | Add/edit/delete habits, category, time-of-day, schedule |
+| **Account** | Supabase sign in/up, sync now, JSON export/import, reset |
 
 ---
 
@@ -44,22 +45,68 @@ A personal looksmaxing / self-improvement PWA for David. Local-first vanilla JS,
 
 ```
 looksmax-app/
-├── index.html              # App shell, nav, modal placeholder
+├── index.html
 ├── css/styles.css          # All styles (dark mobile-first)
 ├── js/
 │   ├── app.js              # All UI rendering + event handling
 │   ├── store.js            # localStorage data layer
 │   ├── defaults.js         # Preloaded habits + category icons
-│   ├── nutrition.js        # Meal library, plan generator, grocery list logic
+│   ├── nutrition.js        # Meal library (12/slot), plan generator, grocery, recipes
 │   ├── supplements.js      # Supplement stack data
-│   ├── program.js          # Training splits, exercise library, e1RM
+│   ├── program.js          # Training splits, exercise library, e1RM, prescribe
 │   ├── supabase-sync.js    # Two-way cloud sync (pull+merge, push, auth)
-│   └── config.js           # Supabase URL + anon key (filled in)
-├── sw.js                   # Service worker (stale-while-revalidate)
-├── manifest.webmanifest    # PWA manifest
+│   └── config.js           # Supabase URL + anon key
+├── sw.js                   # Service worker v7 (stale-while-revalidate)
+├── manifest.webmanifest
 ├── supabase-schema.sql     # Already run on Supabase — DO NOT run again
-└── SETUP.md                # Setup walkthrough for reference
+└── SETUP.md
 ```
+
+---
+
+## Data model (localStorage key: `looksmax.v1`)
+
+```
+state = {
+  habits:        [...],          // habit definitions
+  completions:   {},             // { "YYYY-MM-DD": { habitId: {done, at, updatedAt} } }
+  weights:       {},             // { "YYYY-MM-DD": { w: Number, updatedAt } }
+  workouts:      {},             // { id: { id, date, templateId, entries, completed, updatedAt } }
+  mealPlans:     {},             // { "YYYY-MM-DD": { plan, done, updatedAt } }
+  sleepLogs:     {},             // { "YYYY-MM-DD": { bed, wake, quality, updatedAt } }
+  skinLogs:      {},             // { "YYYY-MM-DD": { condition, acne, oiliness, amDone, pmDone, updatedAt } }
+  waterLogs:     {},             // { "YYYY-MM-DD": { glasses: N, updatedAt } }
+  groceryChecked:{},             // { scopeKey: { itemKey: bool } } — local only
+  profile: {
+    units, sex, heightCm, age, activity,
+    goalMode, targetWeight, weeklyRate,
+    calorieTarget, proteinTarget,           // null = auto
+    diet:  { type, avoid, mealsPerDay },
+    sleep: { targetBed, targetWake, currentBed, planStart },
+    skin:  { amSteps: [{id, name, product}], pmSteps: [...] },
+    waterTarget: 8,
+    updatedAt
+  },
+  training: {
+    configured, experience, goal, equipment,
+    days: [weekday numbers],
+    splitId: "ul4"|"ppl3"|"fb3"|"bro5",
+    updatedAt
+  },
+  meta: { installedAt }
+}
+```
+
+---
+
+## Gym splits available
+
+| splitId | Name | Templates | Recommended days |
+|---------|------|-----------|-----------------|
+| `ul4` | Upper / Lower (4-day) | upperA, lowerA, upperB, lowerB | 4 |
+| `ppl3` | Push / Pull / Legs | push, pull, legs | 3 (or 6 for 2×) |
+| `fb3` | Full Body (3-day) | fullBodyA, fullBodyB, fullBodyA | 3 |
+| `bro5` | Bro Split (5-day) | chest, back, shoulders, armsDay, legsDay | 5 |
 
 ---
 
@@ -68,54 +115,59 @@ looksmax-app/
 | Step | Status |
 |------|--------|
 | Project created | ✅ |
-| Schema SQL run | ✅ (tables + RLS policies all created) |
+| Schema SQL run | ✅ |
 | Keys in config.js | ✅ |
 | Deployed to GitHub | ✅ |
-| Email confirmation disabled | ⚠️ **NOT DONE YET** — David needs to go to Authentication → Sign In / Providers → Email → turn OFF "Confirm email" |
-| Account created in app | ⚠️ **NOT DONE YET** — David needs to open the app, tap "Sign in" chip, create account |
+| Email confirmation disabled | ⚠️ David needs to do this: Authentication → Sign In / Providers → Email → OFF |
+| Account created in app | ⚠️ Not done yet |
 
 ---
 
-## Pending / known issues
-
-1. **App not updating on David's device** — The old v4 service worker cache is stuck. He needs a **one-time hard refresh** (`Ctrl+Shift+R` desktop, or clear site cache on phone). After that, stale-while-revalidate handles future updates automatically.
-
-2. **Supabase email confirmation** — Must be disabled before account creation works without email verification (step above).
-
-3. **Grocery list doesn't sync to cloud** — `groceryChecked` state in store is intentionally local-only (`sync: false`). This is fine — it's ephemeral shopping state.
-
----
-
-## Potential next features (David mentioned or hinted at)
-
-- **More meal variety** — current library has ~5 options per slot, gets repetitive. Expand to 10–15 per slot.
-- **Skin / acne tracker** — David mentioned this in session 1 as a desired feature ("anti acne stuff")
-- **Realtime sync** — use Supabase Realtime subscriptions so two open tabs stay live-synced
-- **Google/GitHub OAuth** — one-click sign-in instead of email/password
-- **Progress photos** — mentioned wanting to track physical appearance over time
-
----
-
-## Key data model notes
-
-- All data lives in `localStorage` under key `looksmax.v1`
-- `store.js` is the single source of truth — all reads/writes go through it
-- Cloud sync is last-write-wins on `updatedAt` timestamps
-- Meal plans are seeded by date string — same date always generates the same plan (deterministic), swaps are saved per-date
-- Service worker cache name: `looksmax-v5` — bump this if you need to force a full refresh on all devices
-
----
-
-## How to deploy changes
+## Deploy instructions
 
 ```bash
 cd "O:/Claude saves/looksmax-app"
 # make changes...
 git add <files>
-git commit -m "Description"
+git -c commit.gpgsign=false commit -m "Description"
 git push origin main
 # GitHub Pages deploys in ~1 min
-# SW stale-while-revalidate means users get update on 2nd load (no version bump needed)
+# SW stale-while-revalidate — users get update on 2nd load
 ```
 
-Only bump `CACHE` in `sw.js` if you need to force-evict the cache on all devices immediately (e.g. breaking schema change).
+**Bump `CACHE` in `sw.js`** if you need to force-evict the cache on all devices immediately. Currently at `looksmax-v7`.
+
+---
+
+## Dev server
+
+`.claude/launch.json` has a `looksmax` config running `python -m http.server 8002`. The other chat's server uses port 8001 — use 8002 to avoid conflicts. Start with `preview_start({ name: "looksmax" })`.
+
+---
+
+## Known gotchas
+
+- **SW cache** — after JS/CSS changes, bump `CACHE` in `sw.js` OR rely on stale-while-revalidate (users get new version on second load automatically).
+- **TDZ bug** — `load()` in store.js must NOT assign the module-level `let state` during its own initializer; write to localStorage directly in first-run path.
+- **Screenshot** — `computer({action:"screenshot"})` fails when browser pane isn't displayed. Use `javascript_tool` DOM checks instead.
+- **store.onChange triggers render** — tapping a skin/routine step or water button causes a full re-render; DOM references go stale. Check outcomes via localStorage or freshly queried DOM selectors.
+- **nutrition.js `quick` field removed** — the `quick: true` flag was on all original meals but dropped in the expansion. The generator doesn't use it. Don't add it back.
+
+---
+
+## Potential next features (David's ideas + gaps)
+
+- **Progress photos** — log physical appearance over time
+- **Google/GitHub OAuth** — one-tap sign-in
+- **Realtime Supabase sync** — two open tabs stay live
+- **Custom meal entry** — log any meal with manual kcal/protein
+- **More skin routine steps** — let users add/remove steps (currently fixed 4 AM + 3 PM)
+- **Grooming tracker** — haircut schedule, beard routine (very on-brand for looksmaxing)
+- **Supplement log** — track which supplements were actually taken each day (currently just a reference list)
+- **Water target customisation** — currently hardcoded default 8, stored in `profile.waterTarget` but no UI to change it yet
+
+---
+
+## Memory note
+
+David's preferences: he typically says "whatever you deem better" when asked to choose — make a recommendation and get brief confirmation before large builds. Always surface architecture tradeoffs before implementing. He wants the app to feel polished and daily-usable, not cluttered.
