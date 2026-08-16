@@ -1,5 +1,5 @@
 // Service worker — offline app shell (cache-first for local files).
-const CACHE = "looksmax-v7";
+const CACHE = "looksmax-v11";
 const ASSETS = [
   "./",
   "./index.html",
@@ -11,6 +11,9 @@ const ASSETS = [
   "./js/supabase-sync.js",
   "./js/program.js",
   "./js/nutrition.js",
+  "./js/foods.js",
+  "./js/off.js",
+  "./js/scanner.js",
   "./js/supplements.js",
   "./manifest.webmanifest",
   "./icons/icon.svg",

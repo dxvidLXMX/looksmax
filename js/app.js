@@ -6,6 +6,9 @@ import { CATEGORY_ICONS, CATEGORY_LABELS, TIME_LABELS } from "./defaults.js";
 import * as cloud from "./supabase-sync.js";
 import * as program from "./program.js";
 import * as nutrition from "./nutrition.js";
+import * as foods from "./foods.js";
+import * as off from "./off.js";
+import * as scanner from "./scanner.js";
 import { SUPPLEMENTS, TIER_INFO, BLUEPRINT_SKIP } from "./supplements.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -757,22 +760,35 @@ function renderEat() {
 
   let mp = store.getMealPlan(today);
   if (!mp) { store.setMealPlan(today, nutrition.generatePlan(diet, targets, today)); mp = store.getMealPlan(today); }
-  const totals = nutrition.planTotals(mp.plan);
+  const customs = store.customMealMap();
+  const totals = nutrition.planTotals(mp.plan, customs);
 
   const cards = mp.plan.map((item, idx) => {
-    const m = nutrition.mealById(item.mealId); if (!m) return "";
-    const s = item.servings;
+    const m = nutrition.resolveMeal(item.mealId, customs); if (!m) return "";
+    const food = foods.foodById(item.mealId);        // from the food database
+    const logged = nutrition.isLogged(item.mealId, customs);
+    const s = item.servings ?? 1;
     const done = mp.done?.[idx] ? "done" : "";
+
+    // anything with a serving label says "2 × 1 large egg"; the rest "1.5× serving"
+    const qtyLbl = m.serving ? ` <span class="meal-qty">· ${s} × ${esc(m.serving)}</span>`
+                             : (s !== 1 ? ` <span class="meal-qty">· ${s}× serving</span>` : "");
+    const tag = food ? food.brand : (logged ? "yours" : "");
+
     return `<div class="meal-card ${done}">
       <button class="meal-check ${done}" data-act="meal-done" data-idx="${idx}">✓</button>
       <div class="meal-main">
-        <div class="meal-slot">${nutrition.SLOT_LABEL[item.slot]}${s !== 1 ? ` · ${s}× serving` : ""}</div>
+        <div class="meal-slot">${nutrition.SLOT_LABEL[item.slot]}${qtyLbl}${tag ? ` <span class="meal-tag">${esc(tag)}</span>` : ""}</div>
         <div class="meal-name">${esc(m.name)}</div>
         <div class="meal-macros">${Math.round(m.kcal * s)} kcal · ${Math.round(m.p * s)}g protein</div>
-        <div class="meal-ing">${esc(m.ing.join(" · "))}</div>
-        ${m.recipe ? `<button class="btn tiny ghost" data-act="view-recipe" data-id="${m.id}">📋 recipe</button>` : ""}
+        ${logged
+          ? `<div class="meal-ing">${Math.round(m.c * s)}g carbs · ${Math.round(m.f * s)}g fat</div>`
+          : `<div class="meal-ing">${esc(m.ing.join(" · "))}</div>`}
+        ${!logged && m.recipe ? `<button class="btn tiny ghost" data-act="view-recipe" data-id="${m.id}">📋 recipe</button>` : ""}
       </div>
-      <button class="btn tiny" data-act="swap-meal" data-idx="${idx}">swap</button>
+      ${logged
+        ? `<button class="btn tiny" data-act="remove-plan-item" data-idx="${idx}">✕</button>`
+        : `<button class="btn tiny" data-act="swap-meal" data-idx="${idx}">swap</button>`}
     </div>`;
   }).join("");
 
@@ -786,6 +802,7 @@ function renderEat() {
       </div></div>
     ${macroSummary(totals, targets)}
     ${cards}
+    <button class="btn full" data-act="log-custom">🔍 Log food</button>
     <button class="btn full" data-act="regen-plan">↻ Give me a different plan</button>
     ${grocerySection}
     <p class="tdee-note">Tap ✓ as you eat each meal. Swap anything you don't fancy — protein & calories re-total live.</p>
@@ -862,6 +879,370 @@ function openDietModal() {
   modal.querySelectorAll("[data-dm]").forEach(b => b.onclick = () => { meals = b.dataset.dm; modal.querySelectorAll("[data-dm]").forEach(x => x.classList.toggle("on", x === b)); });
   modal.querySelectorAll(".chip[data-av]").forEach(b => b.onclick = () => b.classList.toggle("on"));
   modal._collect = () => ({ type, mealsPerDay: meals, avoid: [...modal.querySelectorAll(".chip[data-av].on")].map(x => x.dataset.av) });
+}
+
+// ----- food picker: search the food database + your saved meals -----
+const SLOT_ORDER = ["breakfast", "lunch", "dinner", "snack"];
+
+// guess the slot from the time of day so the form opens on the likely one
+function guessSlot() {
+  const h = new Date().getHours();
+  if (h < 11) return "breakfast";
+  if (h < 15) return "lunch";
+  if (h < 21) return "dinner";
+  return "snack";
+}
+
+// picker state: which row is expanded, and at what quantity
+let pickSel = null;   // { id, qty }
+const round2 = (n) => Math.round(n * 10) / 10;
+
+function pickerMacros(item, qty) {
+  return { kcal: Math.round(item.kcal * qty), p: Math.round(item.p * qty),
+           c: Math.round(item.c * qty), f: Math.round(item.f * qty) };
+}
+
+// one result row, plus the quantity panel when it's the selected one
+function pickerRow(item, { saved = false } = {}) {
+  const sub = saved
+    ? `Yours · ${item.kcal} kcal · ${item.p}g protein${item.serving ? ` · ${esc(item.serving)}` : ""}`
+    : `${item.brand ? esc(item.brand) + " · " : ""}${item.kcal} kcal · ${item.p}g protein · ${esc(item.serving)}`;
+
+  const row = `<div class="cm-row">
+    <button class="cm-pick ${pickSel?.id === item.id ? "on" : ""}" data-act="pick-item" data-id="${item.id}">
+      <span class="cm-name">${esc(item.name)}</span>
+      <span class="cm-macros">${sub}</span>
+    </button>
+    ${saved ? `<button class="btn tiny" data-act="del-custom-meal" data-id="${item.id}" title="Delete saved meal">🗑</button>` : ""}
+  </div>`;
+
+  if (pickSel?.id !== item.id) return row;
+
+  const qty = pickSel.qty;
+  const t = pickerMacros(item, qty);
+  const unit = item.serving || "serving";
+  const slotChips = SLOT_ORDER.map(s =>
+    `<button type="button" class="chip ${pickSel.slot === s ? "on" : ""}" data-act="pick-slot" data-slot="${s}">${nutrition.SLOT_LABEL[s]}</button>`).join("");
+
+  return row + `<div class="cm-expand">
+    <div class="cm-qty">
+      <button class="btn tiny" data-act="pick-qty" data-d="-0.5">−</button>
+      <input id="pick-q" type="number" inputmode="decimal" step="0.5" min="0.5" value="${qty}"/>
+      <button class="btn tiny" data-act="pick-qty" data-d="0.5">+</button>
+      <span class="cm-unit">× ${esc(unit)}</span>
+    </div>
+    <div class="cm-calc" id="pick-calc">${t.kcal} kcal · ${t.p}g protein · ${t.c}g carbs · ${t.f}g fat</div>
+    <div class="chips cm-slots">${slotChips}</div>
+    <div class="cm-expand-actions">
+      <button class="btn tiny ghost" data-act="pick-adjust" data-id="${item.id}">✎ adjust</button>
+      <button class="btn primary" data-act="pick-add" data-id="${item.id}">Add to today</button>
+    </div>
+  </div>`;
+}
+
+// Open Food Facts lookup state — only ever populated by an explicit tap
+let offState = { q: null, status: "idle", results: [], msg: "" };
+
+function onlineSection(q) {
+  if (offState.q !== q) {
+    if (!navigator.onLine) {
+      return `<div class="cm-group">Online</div>
+        <p class="stat-lbl" style="padding:2px 0 8px">You're offline — the ${foods.FOODS.length} foods above still work.</p>`;
+    }
+    return `<button class="btn full off-btn" data-act="off-search">🌐 Also search Open Food Facts</button>`;
+  }
+  if (offState.status === "loading") {
+    return `<div class="cm-group">Online</div><p class="stat-lbl" style="padding:2px 0 8px">Searching Open Food Facts…</p>`;
+  }
+  if (offState.status === "error") {
+    return `<div class="cm-group">Online</div>
+      <p class="stat-lbl" style="padding:2px 0 8px">${esc(offState.msg)}</p>
+      <button class="btn full off-btn" data-act="off-search">Try again</button>`;
+  }
+  if (!offState.results.length) {
+    return `<div class="cm-group">Online</div><p class="stat-lbl" style="padding:2px 0 8px">Nothing found online for “${esc(q)}”.</p>`;
+  }
+  return `<div class="cm-group">Open Food Facts · adding saves it to your meals</div>`
+       + offState.results.map(f => pickerRow(f)).join("");
+}
+
+function pickerRows(query = "") {
+  const q = query.trim();
+  const saved = store.getCustomMeals()
+    .filter(m => !q || m.name.toLowerCase().includes(q.toLowerCase()));
+
+  // no query yet → show what you've saved, since that's what you repeat most
+  if (!q) {
+    if (!saved.length) {
+      return `<p class="stat-lbl" style="padding:6px 0 10px">Search for anything — “egg”, “big mac”, “chicken breast”, “monster”.</p>`;
+    }
+    return `<div class="cm-group">Your saved meals</div>` +
+      saved.map(m => pickerRow(m, { saved: true })).join("");
+  }
+
+  const hits = foods.searchFoods(q, 40);
+  const local =
+      (saved.length ? `<div class="cm-group">Your saved meals</div>` + saved.map(m => pickerRow(m, { saved: true })).join("") : "")
+    + (hits.length  ? `<div class="cm-group">Food database</div>`  + hits.map(f => pickerRow(f)).join("")  : "");
+
+  const nothingLocal = !saved.length && !hits.length
+    ? `<p class="stat-lbl" style="padding:6px 0 8px">Nothing in the app for “${esc(q)}”. Try online, or add it yourself below.</p>`
+    : "";
+
+  return local + nothingLocal + onlineSection(q);
+}
+
+// ----- barcode scanning -----
+let scanning = false;
+
+const scanMsg = (t) => { const el = $("#scan-msg"); if (el) el.textContent = t; };
+
+// show/hide the scanner without touching #cm-results, so re-rendering the
+// result list can never rip the live <video> out of the DOM
+function setScanUI(on) {
+  $("#cm-scan")?.classList.toggle("hidden", !on);
+  $("#cm-results")?.classList.toggle("hidden", on);
+  $("#cm-new")?.classList.toggle("hidden", on);
+}
+
+async function openScanner() {
+  if (scanning) return;
+  scanning = true;
+  setScanUI(true);
+  scanMsg("Starting camera…");
+  try {
+    await scanner.startScan($("#scan-video"), onBarcode);
+    // The permission prompt can outlive the sheet: if the user closed it while
+    // we were waiting, the stream would start with nothing to stop it.
+    if (!scanning) { scanner.stopScan(); scanner.releaseVideo($("#scan-video")); return; }
+    scanMsg("Point the camera at the barcode.");
+  } catch (err) {
+    console.warn("scan failed", err);
+    scanner.stopScan();
+    if (!scanning || !$("#scan-manual")) return;   // sheet already gone
+    scanMsg(scanner.describeError(err));
+    $("#scan-manual").open = true;                 // typing it in is the way out
+  }
+}
+
+// Sync on purpose: the panel must close on the same tick as the tap.
+// Awaiting teardown first left the scanner visibly stuck for a beat.
+function closeScanner() {
+  scanning = false;
+  setScanUI(false);
+  scanner.stopScan();
+  scanner.releaseVideo($("#scan-video"));
+}
+
+// a decoded (or hand-typed) barcode -> OFF product -> ready-to-add row
+async function onBarcode(code) {
+  await scanner.stopScan();            // one hit is enough; free the camera
+  scanner.releaseVideo($("#scan-video"));
+  scanMsg(`Found ${code} — looking it up…`);
+  try {
+    const item = await off.lookupBarcode(code);
+    if (!$("#cm-results")) return;              // sheet closed mid-lookup
+    if (!item) {
+      scanMsg(`Barcode ${code} isn't in Open Food Facts. Add it yourself below.`);
+      scanning = false;
+      setScanUI(false);
+      offState = { q: null, status: "idle", results: [], msg: "" };
+      $("#cm-new").open = true;
+      toast("Not found — add it manually");
+      return;
+    }
+    // hand it to the picker as if it were an online search result
+    scanning = false;
+    setScanUI(false);
+    offState = { q: ($("#cm-search").value || "").trim() || code, status: "done", results: [item], msg: "" };
+    $("#cm-search").value = offState.q;
+    pickSel = { id: item.id, qty: 1, slot: guessSlot() };
+    refreshPicker();
+    $("#cm-results")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (err) {
+    if (!$("#scan-manual")) return;             // sheet closed mid-lookup
+    scanMsg(err?.message === "offline"
+      ? "You're offline — a barcode lookup needs a connection."
+      : "Couldn't reach Open Food Facts. Try again in a moment.");
+    $("#scan-manual").open = true;
+  }
+}
+
+// fire the online lookup for whatever is currently typed
+function runOnlineSearch() {
+  const q = ($("#cm-search")?.value || "").trim();
+  if (!q) return;
+  offState = { q, status: "loading", results: [], msg: "" };
+  refreshPicker();
+  off.searchOnline(q)
+    .then(results => {
+      if (offState.q !== q) return;                  // a newer search superseded this
+      offState = { q, status: "done", results, msg: "" };
+    })
+    .catch(err => {
+      if (offState.q !== q) return;
+      const offline = err?.message === "offline";
+      const aborted = err?.name === "AbortError";
+      offState = { q, status: "error", results: [],
+        msg: offline ? "You're offline."
+           : aborted ? "That took too long — tap to retry."
+           : "Couldn't reach Open Food Facts (it limits how often you can search). Wait a moment and retry." };
+    })
+    .finally(() => { if (offState.q === q) refreshPicker(); });
+}
+
+// re-render just the results list, keeping the search box focused
+function refreshPicker() {
+  const box = $("#cm-results");
+  if (!box) return;
+  box.innerHTML = pickerRows($("#cm-search")?.value || "");
+  const qEl = $("#pick-q");
+  if (qEl) qEl.addEventListener("input", () => {
+    const item = pickedItem();
+    const qty = Number(qEl.value);
+    if (!item || !(qty > 0)) return;
+    pickSel.qty = qty;
+    const t = pickerMacros(item, qty);
+    $("#pick-calc").textContent = `${t.kcal} kcal · ${t.p}g protein · ${t.c}g carbs · ${t.f}g fat`;
+  });
+}
+
+function pickedItem() {
+  if (!pickSel) return null;
+  return foods.foodById(pickSel.id)
+      || store.getCustomMeal(pickSel.id)
+      || offState.results.find(r => r.id === pickSel.id)
+      || null;
+}
+
+function openFoodPickerModal() {
+  pickSel = null;
+  scanning = false;
+  offState = { q: null, status: "idle", results: [], msg: "" };
+  const slot = guessSlot();
+  const slotSeg = SLOT_ORDER.map(s =>
+    `<button type="button" class="seg-btn ${s === slot ? "on" : ""}" data-cmslot="${s}">${nutrition.SLOT_LABEL[s]}</button>`).join("");
+
+  openModal(`
+    <h3>Log food</h3>
+    <label class="fld"><span>Search foods & your saved meals</span>
+      <div class="search-row">
+        <input id="cm-search" type="search" placeholder="e.g. egg, big mac, chicken breast…" autocomplete="off"/>
+        <button class="btn scan-btn" data-act="scan-open" title="Scan a barcode">📷</button>
+      </div></label>
+
+    <div id="cm-scan" class="cm-scan hidden">
+      <div class="scan-box">
+        <video id="scan-video" playsinline autoplay muted></video>
+        <div class="scan-frame"></div>
+      </div>
+      <p class="stat-lbl" id="scan-msg">Starting camera…</p>
+      <details class="adv" id="scan-manual">
+        <summary>Type the barcode number instead</summary>
+        <div class="search-row">
+          <input id="scan-code" type="text" inputmode="numeric" placeholder="e.g. 3017620422003" autocomplete="off"/>
+          <button class="btn" data-act="scan-lookup">Find</button>
+        </div>
+      </details>
+      <button class="btn full" data-act="scan-close">Cancel scanning</button>
+    </div>
+
+    <div id="cm-results" class="cm-results"></div>
+
+    <details class="adv" id="cm-new">
+      <summary>＋ Add something that isn't listed</summary>
+      <label class="fld"><span>Name</span>
+        <input id="cm-name" type="text" placeholder="e.g. Mum's lasagne" autocomplete="off"/></label>
+      <div class="fld"><span>Meal slot</span><div class="seg wrap" id="cm-slot">${slotSeg}</div></div>
+      <div class="row2">
+        <label class="fld"><span>Calories</span><input id="cm-kcal" type="number" inputmode="numeric" min="0" placeholder="e.g. 650"/></label>
+        <label class="fld"><span>Protein (g)</span><input id="cm-p" type="number" inputmode="numeric" min="0" placeholder="e.g. 40"/></label>
+      </div>
+      <div class="row2">
+        <label class="fld"><span>Carbs (g) <i>optional</i></span><input id="cm-c" type="number" inputmode="numeric" min="0"/></label>
+        <label class="fld"><span>Fat (g) <i>optional</i></span><input id="cm-f" type="number" inputmode="numeric" min="0"/></label>
+      </div>
+      <button class="btn primary full" data-act="save-custom-meal">Save & add</button>
+    </details>
+
+    <div class="modal-actions"><span></span>
+      <button class="btn" data-act="close-modal">Done</button></div>
+  `);
+
+  const modal = $("#modal");
+  let chosenSlot = slot;
+  modal.querySelectorAll("[data-cmslot]").forEach(b => b.onclick = () => {
+    chosenSlot = b.dataset.cmslot;
+    modal.querySelectorAll("[data-cmslot]").forEach(x => x.classList.toggle("on", x === b));
+  });
+  $("#cm-search").addEventListener("input", () => {
+    pickSel = null;
+    offState = { q: null, status: "idle", results: [], msg: "" };   // stale for a new query
+    refreshPicker();
+  });
+  modal._collect = () => ({
+    name: $("#cm-name").value,
+    slot: chosenSlot,
+    kcal: $("#cm-kcal").value,
+    p: $("#cm-p").value,
+    c: $("#cm-c").value,
+    f: $("#cm-f").value,
+  });
+  modal._setSlot = (s) => {
+    chosenSlot = s;
+    modal.querySelectorAll("[data-cmslot]").forEach(x => x.classList.toggle("on", x.dataset.cmslot === s));
+  };
+  refreshPicker();
+}
+
+// "Nutella" branded "Nutella" shouldn't become "Nutella Nutella"
+function fullName(item) {
+  const b = (item.brand || "").trim();
+  if (!b || item.name.toLowerCase().startsWith(b.toLowerCase())) return item.name;
+  return `${b} ${item.name}`;
+}
+
+// prefill the "add your own" form from a database food, so a wrong value can
+// be corrected and saved as your own copy
+function adjustFood(item) {
+  const modal = $("#modal");
+  $("#cm-name").value = fullName(item);
+  $("#cm-kcal").value = item.kcal;
+  $("#cm-p").value = item.p;
+  $("#cm-c").value = item.c;
+  $("#cm-f").value = item.f;
+  if (item.slot) modal._setSlot(item.slot);
+  $("#cm-new").open = true;
+  $("#cm-new").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// Reroll the suggested library meals but keep anything you logged yourself —
+// those record what you actually ate, so they must survive a regenerate.
+function regeneratePlan(salt) {
+  const today = store.todayKey();
+  const customs = store.customMealMap();
+  const mp = store.getMealPlan(today);
+
+  const kept = [], keptDone = [];
+  (mp?.plan || []).forEach((item, i) => {
+    if (!nutrition.isLogged(item.mealId, customs)) return;
+    keptDone.push(!!mp.done?.[i]);
+    kept.push(item);
+  });
+
+  const fresh = nutrition.generatePlan(store.getDiet(), store.computeTargets(), today, salt);
+  const done = {};
+  keptDone.forEach((wasDone, i) => { if (wasDone) done[fresh.length + i] = true; });
+
+  store.setMealPlan(today, [...fresh, ...kept], done);
+  return kept.length;
+}
+
+// add a food or saved meal to today's plan
+function addCustomToPlan(meal, qty = 1, slot = null) {
+  const today = store.todayKey();
+  if (store.getCustomMeal(meal.id)) store.touchCustomMeal(meal.id);
+  store.addPlanItem(today, { slot: slot || meal.slot || guessSlot(), mealId: meal.id, servings: qty });
 }
 
 // ---------------- SKIN ----------------
@@ -1281,6 +1662,13 @@ function openModal(html) {
   back.classList.remove("hidden");
 }
 function closeModal() {
+  // Wiping innerHTML destroys the <video> but would leave its MediaStream
+  // running — the camera light stays on. Release it before the DOM goes.
+  if (scanning || $("#scan-video")) {
+    scanning = false;
+    scanner.stopScan();
+    scanner.releaseVideo($("#scan-video"));
+  }
   $("#modal-back").classList.add("hidden");
   $("#modal").innerHTML = "";
 }
@@ -1419,9 +1807,81 @@ function onClick(e) {
       break;
     }
     case "regen-plan": {
-      const today = store.todayKey();
-      store.setMealPlan(today, nutrition.generatePlan(store.getDiet(), store.computeTargets(), today, String(Date.now())));
-      toast("Fresh plan");
+      const kept = regeneratePlan(String(Date.now()));
+      toast(kept ? "Fresh plan · your own meals kept" : "Fresh plan");
+      break;
+    }
+    case "remove-plan-item": store.removePlanItem(store.todayKey(), +el.dataset.idx); toast("Removed"); break;
+    case "log-custom": openFoodPickerModal(); break;
+    case "off-search": runOnlineSearch(); break;
+    case "scan-open": openScanner(); break;
+    case "scan-close": closeScanner(); break;
+    case "scan-lookup": {
+      const code = ($("#scan-code").value || "").replace(/\s+/g, "");
+      if (!/^\d{6,14}$/.test(code)) { toast("Enter the digits under the barcode"); return; }
+      scanMsg(`Looking up ${code}…`);
+      onBarcode(code);
+      break;
+    }
+    case "pick-item": {
+      const id = el.dataset.id;
+      if (pickSel?.id === id) { pickSel = null; refreshPicker(); break; }   // tap again to collapse
+      const item = foods.foodById(id) || store.getCustomMeal(id) || offState.results.find(r => r.id === id);
+      pickSel = { id, qty: 1, slot: item?.slot || guessSlot() };
+      refreshPicker();
+      break;
+    }
+    case "pick-qty": {
+      if (!pickSel) break;
+      pickSel.qty = Math.max(0.5, round2(pickSel.qty + Number(el.dataset.d)));
+      refreshPicker();
+      break;
+    }
+    case "pick-slot": {
+      if (!pickSel) break;
+      pickSel.slot = el.dataset.slot;
+      refreshPicker();
+      break;
+    }
+    case "pick-add": {
+      const item = pickedItem();
+      if (!item) break;
+      const { qty, slot } = pickSel;
+      // An online result lives only in memory — save it as one of your own
+      // meals so the logged entry still resolves offline later.
+      const toAdd = item.online
+        ? store.saveCustomMeal({
+            name: fullName(item),
+            slot, serving: item.serving,
+            kcal: item.kcal, p: item.p, c: item.c, f: item.f,
+          })
+        : item;
+      addCustomToPlan(toAdd, qty, slot);
+      closeModal(); render();
+      toast(`Added ${qty !== 1 ? `${qty}× ` : ""}${toAdd.name}`);
+      break;
+    }
+    case "pick-adjust": {
+      const item = pickedItem();
+      if (item) adjustFood(item);
+      break;
+    }
+    case "del-custom-meal": {
+      const m = store.getCustomMeal(el.dataset.id);
+      if (!m || !confirm(`Delete "${m.name}" from your saved meals?`)) break;
+      store.deleteCustomMeal(m.id);
+      if (pickSel?.id === m.id) pickSel = null;
+      refreshPicker();
+      toast("Deleted");
+      break;
+    }
+    case "save-custom-meal": {
+      const d = $("#modal")._collect();
+      if (!d.name.trim()) { toast("Give the meal a name"); return; }
+      if (!(Number(d.kcal) > 0)) { toast("Enter the calories"); return; }
+      const saved = store.saveCustomMeal(d);
+      addCustomToPlan(saved);
+      closeModal(); render(); toast(`Saved & added ${saved.name}`);
       break;
     }
     case "grocery-toggle":
@@ -1439,8 +1899,7 @@ function onClick(e) {
     case "edit-diet": openDietModal(); break;
     case "save-diet": {
       store.updateDiet($("#modal")._collect());
-      const today = store.todayKey();
-      store.setMealPlan(today, nutrition.generatePlan(store.getDiet(), store.computeTargets(), today));
+      regeneratePlan("");
       closeModal(); render(); toast("Diet updated");
       break;
     }

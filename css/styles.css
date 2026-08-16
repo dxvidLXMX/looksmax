@@ -290,6 +290,65 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .meal-card.done .meal-name { text-decoration: line-through; }
 .meal-macros { font-size: 13px; color: var(--text); }
 .meal-ing { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.meal-qty { text-transform: none; letter-spacing: 0; color: var(--muted); font-weight: 600; }
+.meal-tag {
+  display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 22%, var(--card));
+  color: var(--text); font-size: 10px; letter-spacing: .5px;
+}
+
+/* food picker (modal) */
+.cm-results { max-height: 46vh; overflow-y: auto; margin-bottom: 6px; }
+.cm-group {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 1px; font-weight: 700;
+  color: var(--muted); margin: 10px 0 6px;
+}
+.cm-group:first-child { margin-top: 0; }
+.cm-row { display: flex; align-items: stretch; gap: 8px; margin-bottom: 8px; }
+.cm-pick {
+  flex: 1; min-width: 0; text-align: left; display: flex; flex-direction: column; gap: 2px;
+  background: var(--card); border: 1px solid var(--line); color: var(--text);
+  padding: 10px 12px; border-radius: 12px;
+}
+.cm-pick:active { border-color: var(--accent); }
+.cm-pick.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
+.cm-name { font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cm-macros { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* quantity panel under the selected result */
+.cm-expand {
+  background: var(--card-2); border: 1px solid var(--accent); border-radius: 12px;
+  padding: 12px; margin: -2px 0 10px;
+}
+.cm-qty { display: flex; align-items: center; gap: 8px; }
+.cm-qty input {
+  width: 74px; text-align: center; background: var(--card); border: 1px solid var(--line);
+  color: var(--text); padding: 8px; border-radius: 10px; font-size: 15px; font-weight: 600;
+}
+.cm-unit { font-size: 13px; color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cm-calc { font-size: 13px; color: var(--text); margin: 10px 0; font-weight: 600; }
+.off-btn { margin: 4px 0 8px; font-size: 14px; }
+
+/* barcode scanner */
+.search-row { display: flex; gap: 8px; align-items: stretch; }
+.search-row input { flex: 1; min-width: 0; }
+.scan-btn { flex: 0 0 auto; font-size: 18px; padding: 0 14px; }
+.cm-scan { margin-bottom: 10px; }
+.scan-box {
+  position: relative; width: 100%; aspect-ratio: 4 / 3; max-height: 300px;
+  background: #000; border-radius: 14px; overflow: hidden; margin-bottom: 10px;
+}
+.scan-box video { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* viewfinder guide — barcodes read best centred and filling the width */
+.scan-frame {
+  position: absolute; inset: 26% 10%; border: 2px solid var(--accent);
+  border-radius: 10px; box-shadow: 0 0 0 100vmax rgba(0,0,0,.35);
+}
+#scan-msg { text-align: center; margin: 0 0 10px; }
+.cm-slots { margin-bottom: 12px; }
+.cm-slots .chip { padding: 6px 10px; font-size: 12px; }
+.cm-expand-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fld > span i { font-style: normal; opacity: .6; }
 
 /* ---------- grocery list ---------- */
 .grocery-section {

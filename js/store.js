@@ -76,6 +76,7 @@ function normalize(s) {
   s.sleepLogs ||= {};               // { "YYYY-MM-DD": { bed:"HH:MM", wake:"HH:MM", quality, updatedAt } }
   s.skinLogs ||= {};                // { "YYYY-MM-DD": { condition, acne, oiliness, amDone, pmDone, updatedAt } }
   s.waterLogs ||= {};               // { "YYYY-MM-DD": { glasses: N, updatedAt } }
+  s.customMeals ||= {};             // { [id]: { id, name, slot, kcal, p, c, f, lastUsed, updatedAt, deleted } }
   s.groceryChecked ||= {};          // { scopeKey: { itemKey: bool } }
   s.profile = { ...defaultProfile(), ...(s.profile || {}) };
   s.profile.diet = { ...defaultProfile().diet, ...(s.profile.diet || {}) };
@@ -496,8 +497,8 @@ export function updateDiet(patch) {
   return state.profile.diet;
 }
 export function getMealPlan(key) { return state.mealPlans[key] || null; }
-export function setMealPlan(key, plan) {
-  state.mealPlans[key] = { plan, done: state.mealPlans[key]?.done || {}, updatedAt: Date.now() };
+export function setMealPlan(key, plan, done) {
+  state.mealPlans[key] = { plan, done: done || state.mealPlans[key]?.done || {}, updatedAt: Date.now() };
   commit();
 }
 export function toggleMealDone(key, idx) {
@@ -508,6 +509,81 @@ export function toggleMealDone(key, idx) {
 export function swapPlanMeal(key, idx, newMealId) {
   const mp = state.mealPlans[key]; if (!mp || !mp.plan[idx]) return;
   mp.plan[idx].mealId = newMealId; mp.updatedAt = Date.now();
+  commit();
+}
+
+// append an item to a day's plan (used for custom meals)
+export function addPlanItem(key, item) {
+  const mp = state.mealPlans[key];
+  if (!mp) { state.mealPlans[key] = { plan: [item], done: {}, updatedAt: Date.now() }; commit(); return; }
+  mp.plan.push(item);
+  mp.done ||= {};
+  delete mp.done[mp.plan.length - 1];   // a shorter earlier plan may have left a flag here
+  mp.updatedAt = Date.now();
+  commit();
+}
+
+// remove an item; `done` is index-keyed so it has to be reindexed too
+export function removePlanItem(key, idx) {
+  const mp = state.mealPlans[key]; if (!mp || !mp.plan[idx]) return;
+  mp.plan.splice(idx, 1);
+  const done = {};
+  for (const [k, v] of Object.entries(mp.done || {})) {
+    const i = Number(k);
+    if (i === idx) continue;
+    done[i > idx ? i - 1 : i] = v;
+  }
+  mp.done = done;
+  mp.updatedAt = Date.now();
+  commit();
+}
+
+// ---------- custom meals (saved, reusable) ----------
+export function customMealMap() { return state.customMeals || {}; }
+export function getCustomMeal(id) { return state.customMeals?.[id] || null; }
+
+// most-recently-used first, so the picker surfaces what you actually eat
+export function getCustomMeals() {
+  return Object.values(state.customMeals || {})
+    .filter(m => !m.deleted)
+    .sort((a, b) => (b.lastUsed || b.createdAt || 0) - (a.lastUsed || a.createdAt || 0));
+}
+
+export function saveCustomMeal(data) {
+  const now = Date.now();
+  const id = data.id || `custom_${cryptoId()}`;
+  const prev = state.customMeals[id];
+  state.customMeals[id] = {
+    ...prev,
+    id,
+    name: String(data.name || "").trim(),
+    slot: data.slot || "snack",
+    serving: data.serving || prev?.serving || "",   // set for items imported from Open Food Facts
+    kcal: Math.max(0, Math.round(Number(data.kcal) || 0)),
+    p: Math.max(0, Math.round(Number(data.p) || 0)),
+    c: Math.max(0, Math.round(Number(data.c) || 0)),
+    f: Math.max(0, Math.round(Number(data.f) || 0)),
+    createdAt: prev?.createdAt || now,
+    lastUsed: prev?.lastUsed || 0,
+    updatedAt: now,
+    deleted: false,
+  };
+  commit();
+  return state.customMeals[id];
+}
+
+export function touchCustomMeal(id) {
+  const m = state.customMeals?.[id]; if (!m) return;
+  m.lastUsed = Date.now();
+  m.updatedAt = Date.now();
+  persist(state);              // no emit — caller is about to commit anyway
+  if (syncHook) syncHook();
+}
+
+export function deleteCustomMeal(id) {
+  const m = state.customMeals?.[id]; if (!m) return;
+  m.deleted = true;
+  m.updatedAt = Date.now();
   commit();
 }
 

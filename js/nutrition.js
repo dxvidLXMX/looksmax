@@ -5,6 +5,8 @@
 //  contains: allergens to filter on (dairy|nuts|gluten)
 // ============================================================
 
+import { FOOD_BY_ID } from "./foods.js";
+
 const r = (prep, ...steps) => ({ prep, steps });
 
 export const MEALS = {
@@ -228,9 +230,21 @@ export function mealById(id) {
   return null;
 }
 
-export function planTotals(plan) {
+// Resolve a plan item to its meal. A plan item can point at three things:
+// the food database, the user's saved custom meals, or the generated library.
+export function resolveMeal(mealId, customs = {}) {
+  return FOOD_BY_ID[mealId] || customs[mealId] || mealById(mealId);
+}
+
+// true for anything the user logged themselves (food DB or custom meal) as
+// opposed to a suggestion the generator produced
+export function isLogged(mealId, customs = {}) {
+  return !!(FOOD_BY_ID[mealId] || customs[mealId]);
+}
+
+export function planTotals(plan, customs = {}) {
   return (plan || []).reduce((a, p) => {
-    const m = mealById(p.mealId); if (!m) return a;
+    const m = resolveMeal(p.mealId, customs); if (!m) return a;
     const s = p.servings || 1;
     a.kcal += m.kcal * s; a.p += m.p * s; a.c += m.c * s; a.f += m.f * s;
     return a;
