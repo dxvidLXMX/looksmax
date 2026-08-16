@@ -761,7 +761,10 @@ function renderEat() {
   let mp = store.getMealPlan(today);
   if (!mp) { store.setMealPlan(today, nutrition.generatePlan(diet, targets, today)); mp = store.getMealPlan(today); }
   const customs = store.customMealMap();
-  const totals = nutrition.planTotals(mp.plan, customs);
+  // Bars track what you've actually ticked off, not what's planned — the plan
+  // is a forecast, the totals are a log. Start at 0, fill as you eat.
+  const eaten = nutrition.planTotals(mp.plan.filter((_, i) => mp.done?.[i]), customs);
+  const planned = nutrition.planTotals(mp.plan, customs);
 
   const cards = mp.plan.map((item, idx) => {
     const m = nutrition.resolveMeal(item.mealId, customs); if (!m) return "";
@@ -800,23 +803,28 @@ function renderEat() {
         <button class="btn" data-act="grocery-toggle">🛒${groceryMode ? " ▲" : ""}</button>
         <button class="btn" data-act="edit-diet">Diet</button>
       </div></div>
-    ${macroSummary(totals, targets)}
+    ${macroSummary(eaten, planned, targets)}
     ${cards}
     <button class="btn full" data-act="log-custom">🔍 Log food</button>
     <button class="btn full" data-act="regen-plan">↻ Give me a different plan</button>
     ${grocerySection}
-    <p class="tdee-note">Tap ✓ as you eat each meal. Swap anything you don't fancy — protein & calories re-total live.</p>
+    <p class="tdee-note">Your totals count only what you've ticked off — tap ✓ as you eat. Swap anything you don't fancy.</p>
   `;
 }
 
-function macroSummary(t, target) {
+// `eaten` drives the bars; `planned` is the whole day's plan, kept as a muted
+// reference so you can still see whether the plan itself hits your target.
+function macroSummary(eaten, planned, target) {
   const bar = (val, tgt, cls) => `<div class="bar"><div class="bar-fill ${cls}" style="width:${Math.min(100, Math.round(val / tgt * 100))}%"></div></div>`;
+  const left = Math.round(target.calories - eaten.kcal);
+  const leftLbl = left >= 0 ? `<b>${left.toLocaleString()}</b> kcal left` : `<b>${Math.abs(left).toLocaleString()}</b> kcal over`;
   return `<div class="body-card">
-    <div class="macro-row"><span>Calories</span><span><b>${Math.round(t.kcal)}</b> / ${target.calories}</span></div>
-    ${bar(t.kcal, target.calories, "")}
-    <div class="macro-row"><span>Protein</span><span><b>${Math.round(t.p)}g</b> / ${target.protein}g</span></div>
-    ${bar(t.p, target.protein, "p")}
-    <div class="macro-mini">Carbs ${Math.round(t.c)}g · Fat ${Math.round(t.f)}g</div>
+    <div class="macro-row"><span>Calories</span><span><b>${Math.round(eaten.kcal).toLocaleString()}</b> / ${target.calories.toLocaleString()}</span></div>
+    ${bar(eaten.kcal, target.calories, "")}
+    <div class="macro-row"><span>Protein</span><span><b>${Math.round(eaten.p)}g</b> / ${target.protein}g</span></div>
+    ${bar(eaten.p, target.protein, "p")}
+    <div class="macro-mini">Carbs ${Math.round(eaten.c)}g · Fat ${Math.round(eaten.f)}g</div>
+    <div class="macro-plan">${leftLbl} &nbsp;·&nbsp; whole plan ${Math.round(planned.kcal).toLocaleString()} kcal · ${Math.round(planned.p)}g protein</div>
   </div>`;
 }
 

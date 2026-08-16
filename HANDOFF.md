@@ -59,7 +59,7 @@ looksmax-app/
 │   ├── program.js          # Training splits, exercise library, e1RM, prescribe
 │   ├── supabase-sync.js    # Two-way cloud sync (pull+merge, push, auth)
 │   └── config.js           # Supabase URL + anon key
-├── sw.js                   # Service worker v11 (stale-while-revalidate)
+├── sw.js                   # Service worker v12 (stale-while-revalidate)
 ├── manifest.webmanifest
 ├── supabase-schema.sql     # Already run on Supabase — DO NOT run again
 └── SETUP.md
@@ -143,7 +143,7 @@ git push origin main
 # SW stale-while-revalidate — users get update on 2nd load
 ```
 
-**Bump `CACHE` in `sw.js`** if you need to force-evict the cache on all devices immediately. Currently at `looksmax-v11`.
+**Bump `CACHE` in `sw.js`** if you need to force-evict the cache on all devices immediately. Currently at `looksmax-v12`.
 
 ---
 
@@ -160,6 +160,7 @@ git push origin main
 - **Screenshot** — `computer({action:"screenshot"})` fails when browser pane isn't displayed. Use `javascript_tool` DOM checks instead.
 - **store.onChange triggers render** — tapping a skin/routine step or water button causes a full re-render; DOM references go stale. Check outcomes via localStorage or freshly queried DOM selectors.
 - **nutrition.js `quick` field removed** — the `quick: true` flag was on all original meals but dropped in the expansion. The generator doesn't use it. Don't add it back.
+- **Eat totals are a log, not a forecast.** The macro bars sum only plan items whose `done[idx]` is true, so the day starts at 0 and fills as meals are ticked. `macroSummary(eaten, planned, target)` still shows the full plan total on a muted line, because the generator scales servings to hit the calorie target and that reference would otherwise be invisible.
 - **`mealPlans[key].done` is index-keyed** — any code that adds/removes plan items must reindex it (`store.removePlanItem`) or clear the stale flag at the new index (`store.addPlanItem`), or ticks land on the wrong meal.
 - **Three kinds of plan item.** A `mealPlans[key].plan[]` entry's `mealId` points at one of: the food DB (`f_*`, in foods.js), a saved custom meal (`custom_*`, in `state.customMeals`), or the generated library (bare id, in nutrition.js `MEALS`). Always resolve via `nutrition.resolveMeal(mealId, customs)` and test with `nutrition.isLogged(mealId, customs)` — `mealById()` alone returns null for the first two. `planTotals(plan, customs)` needs the customs map passed in.
 - **Logged items (food DB + custom) are deliberately special-cased**: skipped by the grocery list (no `ing` field), and preserved by "regenerate plan" via `regeneratePlan()` in app.js, because they record what you actually ate rather than a suggestion.
