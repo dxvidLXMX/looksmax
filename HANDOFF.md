@@ -22,16 +22,17 @@ A personal looksmaxing / self-improvement PWA for David. Local-first vanilla JS,
 
 | Tab | Features |
 |-----|----------|
-| **Today** | Daily habit tracker (Morning/Evening/Anytime), progress ring, streak counter, **💧 Water tracker** (glass counter, + / − buttons, 8-glass default, progress bar) |
+| **Today** | 🎯 **Focus block timer** (clock-derived, survives backgrounding) + 📌 **Top 3 tasks**, daily habit tracker (Morning/Evening/Anytime), progress ring, streak counter, **💧 Water tracker** (glass counter, + / − buttons, 8-glass default, progress bar) |
 | **Gym** | Program coach, 4 splits (Upper/Lower, PPL, Full Body, Bro Split), double-progression, live session logger, rest timer, PR detection, per-exercise strength chart |
 | **Eat** | Meal plan generator (12 options/slot), swap meals, ✓ as you eat, macro bars, diet settings, 🛒 grocery list (today + week mode), **📋 recipe modal** on every meal, **🔍 Log food** — MyFitnessPal-style search over a 470-item food database (US chains + whole foods) with quantity stepper and slot picker, your own saved custom meals, **📷 barcode scanning**, and Open Food Facts online lookup |
 | **Body** | Weight log, SVG trend chart, TDEE calculator, goal mode (lose/maintain/gain), ETA to target |
-| **More** | Hub: Skin, Sleep, Supplements, History, Habits, Account |
+| **More** | Hub: Focus, Skin, Sleep, Supplements, History, Habits, Account |
 
 ### More hub sub-screens
 
 | Sub | Features |
 |-----|----------|
+| **Focus** | Streak, focused minutes chart, avg start time, where-the-time-went by label, today's blocks, block length + target start settings |
 | **Skin** | Daily check-in (condition 1–5, acne, oiliness), AM/PM routine tracker (tap to check off steps), editable product names, 30-day trend chart, tips |
 | **Sleep** | Gradual schedule fixer (15 min/2 days), tonight's target, sleep log (bed/wake/quality), hours-slept trend chart, tips |
 | **Supplements** | Evidence-tiered stack (Core/Situational/Blueprint-skip), one-tap add to habits |
@@ -59,7 +60,7 @@ looksmax-app/
 │   ├── program.js          # Training splits, exercise library, e1RM, prescribe
 │   ├── supabase-sync.js    # Two-way cloud sync (pull+merge, push, auth)
 │   └── config.js           # Supabase URL + anon key
-├── sw.js                   # Service worker v12 (stale-while-revalidate)
+├── sw.js                   # Service worker v13 (stale-while-revalidate)
 ├── manifest.webmanifest
 ├── supabase-schema.sql     # Already run on Supabase — DO NOT run again
 └── SETUP.md
@@ -79,6 +80,9 @@ state = {
   sleepLogs:     {},             // { "YYYY-MM-DD": { bed, wake, quality, updatedAt } }
   skinLogs:      {},             // { "YYYY-MM-DD": { condition, acne, oiliness, amDone, pmDone, updatedAt } }
   waterLogs:     {},             // { "YYYY-MM-DD": { glasses: N, updatedAt } }
+  focusSessions: {},             // { id: { id, date, label, startedAt, endedAt, minutes, completed, updatedAt, deleted } }
+  tasks:         {},             // { id: { id, date, text, done, order, updatedAt, deleted } }
+  activeFocus:   null,           // { id, label, startedAt, minutes } — running timer, LOCAL ONLY
   customMeals:   {},             // { id: { id, name, slot, kcal, p, c, f, lastUsed, updatedAt, deleted } }
   groceryChecked:{},             // { scopeKey: { itemKey: bool } } — local only
   profile: {
@@ -88,6 +92,7 @@ state = {
     diet:  { type, avoid, mealsPerDay },
     sleep: { targetBed, targetWake, currentBed, planStart },
     skin:  { amSteps: [{id, name, product}], pmSteps: [...] },
+    focus: { sessionMin: 25, targetStart: "09:00" },
     waterTarget: 8,
     updatedAt
   },
@@ -125,9 +130,12 @@ state = {
 | Email confirmation disabled | ✅ |
 | Account created + signed in | ✅ (2026-08-15) |
 
-**Custom meals sync note:** they ride along inside the existing `profiles.data` JSON
-blob (`{ profile, training, customMeals }`), merged per-id last-write-wins. No new
-table, so `supabase-schema.sql` still must not be re-run.
+**Piggybacked sync note:** custom meals, focus sessions and tasks all ride along
+inside the existing `profiles.data` JSON blob
+(`{ profile, training, customMeals, focusSessions, tasks }`), merged per-id
+last-write-wins. No new tables, so `supabase-schema.sql` still must not be re-run.
+If these collections ever grow large (years of daily sessions), move them to
+dedicated tables — the whole blob is rewritten on every push.
 
 ---
 
@@ -143,7 +151,7 @@ git push origin main
 # SW stale-while-revalidate — users get update on 2nd load
 ```
 
-**Bump `CACHE` in `sw.js`** if you need to force-evict the cache on all devices immediately. Currently at `looksmax-v12`.
+**Bump `CACHE` in `sw.js`** if you need to force-evict the cache on all devices immediately. Currently at `looksmax-v13`.
 
 ---
 
@@ -160,6 +168,10 @@ git push origin main
 - **Screenshot** — `computer({action:"screenshot"})` fails when browser pane isn't displayed. Use `javascript_tool` DOM checks instead.
 - **store.onChange triggers render** — tapping a skin/routine step or water button causes a full re-render; DOM references go stale. Check outcomes via localStorage or freshly queried DOM selectors.
 - **nutrition.js `quick` field removed** — the `quick: true` flag was on all original meals but dropped in the expansion. The generator doesn't use it. Don't add it back.
+- **The focus timer is clock-derived, never decremented.** `activeFocus` stores an absolute `startedAt`; remaining time is always `startedAt + minutes*60000 - Date.now()`. iOS suspends JS timers in a backgrounded PWA, so a tick-based countdown silently stalls in your pocket. `focusTick()` also runs on `visibilitychange`/`focus`, so a block that finished while away is logged on return rather than still showing time left. Verified by rewinding `startedAt` 20 and 55 minutes.
+- **`activeFocus` is deliberately local-only** (`commit({sync:false})`) — a half-finished timer syncing to another device would resurrect or double-log it. Completed sessions and tasks do sync.
+- **Blocks stopped early log their real elapsed minutes**, flagged `completed:false`. Discarding them would make the weekly totals flattering and useless.
+- **Task text saves via `setTaskTextQuiet`** — a normal commit re-renders and rips the input out from under the user mid-sentence (same reason `saveWorkoutQuiet` exists). `onFieldChange` handles `data-task` before the gym-session early-return.
 - **Eat totals are a log, not a forecast.** The macro bars sum only plan items whose `done[idx]` is true, so the day starts at 0 and fills as meals are ticked. `macroSummary(eaten, planned, target)` still shows the full plan total on a muted line, because the generator scales servings to hit the calorie target and that reference would otherwise be invisible.
 - **`mealPlans[key].done` is index-keyed** — any code that adds/removes plan items must reindex it (`store.removePlanItem`) or clear the stale flag at the new index (`store.addPlanItem`), or ticks land on the wrong meal.
 - **Three kinds of plan item.** A `mealPlans[key].plan[]` entry's `mealId` points at one of: the food DB (`f_*`, in foods.js), a saved custom meal (`custom_*`, in `state.customMeals`), or the generated library (bare id, in nutrition.js `MEALS`). Always resolve via `nutrition.resolveMeal(mealId, customs)` and test with `nutrition.isLogged(mealId, customs)` — `mealById()` alone returns null for the first two. `planTotals(plan, customs)` needs the customs map passed in.
@@ -178,6 +190,7 @@ git push origin main
 ## Potential next features (David's ideas + gaps)
 
 - **Grams / unit conversion** — foods currently have one canonical serving each plus a quantity multiplier. A `grams` field per food would allow "150 g chicken breast".
+- **Notifications when a block ends** — currently only an in-app chime, so a finished block is silent if the phone is locked. iOS 16.4+ supports Web Push for installed PWAs; would need permission flow + service-worker push handling.
 - **Progress photos** — log physical appearance over time
 - **Google/GitHub OAuth** — one-tap sign-in
 - **Realtime Supabase sync** — two open tabs stay live

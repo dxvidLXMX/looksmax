@@ -224,6 +224,14 @@ async function pullAndMerge() {
       const local = s.customMeals[id];
       if (!local || (remote.updatedAt || 0) > (local.updatedAt || 0)) s.customMeals[id] = remote;
     }
+    // focus sessions + top-3 tasks ride along too, merged per id
+    for (const coll of ["focusSessions", "tasks"]) {
+      s[coll] ||= {};
+      for (const [id, remote] of Object.entries(d[coll] || {})) {
+        const local = s[coll][id];
+        if (!local || (remote.updatedAt || 0) > (local.updatedAt || 0)) s[coll][id] = remote;
+      }
+    }
   }
 
   store._replaceState(s, { sync: false });
@@ -297,11 +305,17 @@ async function pushLocal() {
 
   // profile + training + custom meals (single row per user, stored together)
   const customMeals = s.customMeals || {};
-  const customUpdated = Object.values(customMeals).reduce((a, m) => Math.max(a, m.updatedAt || 0), 0);
-  const settingsUpdated = Math.max(s.profile?.updatedAt || 0, s.training?.updatedAt || 0, customUpdated);
+  const focusSessions = s.focusSessions || {};
+  const tasks = s.tasks || {};
+  const newest = (obj) => Object.values(obj).reduce((a, m) => Math.max(a, m.updatedAt || 0), 0);
+  const settingsUpdated = Math.max(
+    s.profile?.updatedAt || 0, s.training?.updatedAt || 0,
+    newest(customMeals), newest(focusSessions), newest(tasks));
   if (settingsUpdated) {
     const { error } = await supabase.from("profiles")
-      .upsert({ user_id: uid(), data: { profile: s.profile, training: s.training, customMeals }, updated_at: settingsUpdated },
+      .upsert({ user_id: uid(),
+                data: { profile: s.profile, training: s.training, customMeals, focusSessions, tasks },
+                updated_at: settingsUpdated },
               { onConflict: "user_id" });
     if (error) throw error;
   }

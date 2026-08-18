@@ -49,6 +49,7 @@ export function defaultProfile() {
     proteinTarget: null,  // manual override (null = auto)
     diet: { type: "omnivore", avoid: [], mealsPerDay: "3+snacks", cooking: "quick" },
     sleep: { targetBed: "23:00", targetWake: "07:00", currentBed: "", planStart: null },
+    focus: { sessionMin: 25, targetStart: "09:00" },
     waterTarget: 8,
     updatedAt: 0,
   };
@@ -77,10 +78,14 @@ function normalize(s) {
   s.skinLogs ||= {};                // { "YYYY-MM-DD": { condition, acne, oiliness, amDone, pmDone, updatedAt } }
   s.waterLogs ||= {};               // { "YYYY-MM-DD": { glasses: N, updatedAt } }
   s.customMeals ||= {};             // { [id]: { id, name, slot, kcal, p, c, f, lastUsed, updatedAt, deleted } }
+  s.focusSessions ||= {};           // { [id]: { id, date, label, startedAt, endedAt, minutes, completed, updatedAt, deleted } }
+  s.tasks ||= {};                   // { [id]: { id, date, text, done, order, updatedAt, deleted } }
+  if (s.activeFocus === undefined) s.activeFocus = null;   // live timer, local only
   s.groceryChecked ||= {};          // { scopeKey: { itemKey: bool } }
   s.profile = { ...defaultProfile(), ...(s.profile || {}) };
   s.profile.diet = { ...defaultProfile().diet, ...(s.profile.diet || {}) };
   s.profile.sleep = { ...defaultProfile().sleep, ...(s.profile.sleep || {}) };
+  s.profile.focus = { ...defaultProfile().focus, ...(s.profile.focus || {}) };
   if (!s.profile.skin) s.profile.skin = defaultSkinProfile();
   s.training = { ...defaultTraining(), ...(s.training || {}) };
   s.meta ||= { installedAt: Date.now() };
@@ -704,4 +709,191 @@ export function _replaceState(next, { sync = false } = {}) {
   persist(next);
   emit();
   if (sync && syncHook) syncHook();
+}
+
+// ---------- focus sessions ----------
+// A running timer is stored as `activeFocus` with an absolute `startedAt`, and
+// remaining time is always derived from the clock — never counted down in JS.
+// iOS suspends timers in a backgrounded PWA, so a tick-based counter would
+// silently stall while the phone was in your pocket.
+
+export function getFocusSettings() { return state.profile.focus; }
+export function updateFocusSettings(patch) {
+  state.profile = { ...state.profile, focus: { ...state.profile.focus, ...patch }, updatedAt: Date.now() };
+  commit();
+  return state.profile.focus;
+}
+
+export function getActiveFocus() { return state.activeFocus; }
+
+export function startFocus(label, minutes) {
+  const mins = Number(minutes) || state.profile.focus.sessionMin || 25;
+  state.activeFocus = {
+    id: cryptoId(),
+    label: String(label || "").trim() || "Deep work",
+    startedAt: Date.now(),
+    minutes: mins,
+  };
+  commit({ sync: false });          // ephemeral; not worth a cloud round-trip
+  return state.activeFocus;
+}
+
+// ms remaining on the running session (can go negative if it ran over)
+export function focusRemainingMs(now = Date.now()) {
+  const a = state.activeFocus;
+  if (!a) return 0;
+  return a.startedAt + a.minutes * 60000 - now;
+}
+
+// End the running session. `completed` false = stopped early; the partial
+// minutes are still logged, because pretending they didn't happen makes the
+// weekly numbers useless.
+export function endFocus({ completed = true } = {}) {
+  const a = state.activeFocus;
+  if (!a) return null;
+  const now = Date.now();
+  const elapsed = Math.max(0, Math.round((now - a.startedAt) / 60000));
+  const minutes = completed ? a.minutes : Math.min(a.minutes, elapsed);
+  const session = {
+    id: a.id,
+    date: todayKey(new Date(a.startedAt)),
+    label: a.label,
+    startedAt: a.startedAt,
+    endedAt: now,
+    minutes,
+    completed: !!completed,
+    updatedAt: now,
+    deleted: false,
+  };
+  state.focusSessions[session.id] = session;
+  state.activeFocus = null;
+  commit();
+  return session;
+}
+
+export function cancelFocus() {
+  state.activeFocus = null;
+  commit({ sync: false });
+}
+
+export function deleteFocusSession(id) {
+  const s = state.focusSessions[id];
+  if (!s) return;
+  s.deleted = true; s.updatedAt = Date.now();
+  commit();
+}
+
+export function allFocusSessions() {
+  return Object.values(state.focusSessions).filter(s => !s.deleted);
+}
+export function focusForDate(key) {
+  return allFocusSessions().filter(s => s.date === key).sort((a, b) => a.startedAt - b.startedAt);
+}
+export function focusMinutes(key) {
+  return focusForDate(key).reduce((a, s) => a + (s.minutes || 0), 0);
+}
+
+// epoch ms of the first session started on a day, or null — this is the
+// "did you actually start your day" signal
+export function firstFocusStart(key) {
+  const list = focusForDate(key);
+  return list.length ? list[0].startedAt : null;
+}
+
+// minutes-past-midnight of the first session, for averaging start times
+function startMinuteOfDay(ms) {
+  const d = new Date(ms);
+  return d.getHours() * 60 + d.getMinutes();
+}
+
+// average first-start time over the last n days that had any session
+export function avgFocusStart(days = 14) {
+  let key = todayKey(), acc = [], guard = 0;
+  while (guard++ < days) {
+    const first = firstFocusStart(key);
+    if (first != null) acc.push(startMinuteOfDay(first));
+    key = addDays(key, -1);
+  }
+  if (!acc.length) return null;
+  return Math.round(acc.reduce((a, b) => a + b, 0) / acc.length);
+}
+
+// [{key, w:minutes}] oldest first — same shape the charts already take
+export function focusSeries(days = 30) {
+  const out = [];
+  let key = todayKey();
+  for (let i = 0; i < days; i++) { out.push({ key, w: focusMinutes(key) }); key = addDays(key, -1); }
+  return out.reverse();
+}
+
+// consecutive days ending today with at least one session (today may be empty)
+export function focusStreak() {
+  let streak = 0, key = todayKey(), guard = 0;
+  while (guard++ < 400) {
+    if (focusMinutes(key) > 0) streak++;
+    else if (key !== todayKey()) break;
+    key = addDays(key, -1);
+  }
+  return streak;
+}
+
+// where the time actually went: [{label, mins}] over the last n days
+export function focusByLabel(days = 7) {
+  const cutoff = addDays(todayKey(), -(days - 1));
+  const map = {};
+  for (const s of allFocusSessions()) {
+    if (s.date < cutoff) continue;
+    const k = s.label || "Unlabelled";
+    map[k] = (map[k] || 0) + (s.minutes || 0);
+  }
+  return Object.entries(map).map(([label, mins]) => ({ label, mins }))
+    .sort((a, b) => b.mins - a.mins);
+}
+
+// ---------- daily top tasks ----------
+export const MAX_TASKS = 3;
+
+export function tasksForDate(key) {
+  return Object.values(state.tasks)
+    .filter(t => !t.deleted && t.date === key)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+}
+
+export function addTask(key, text = "") {
+  const list = tasksForDate(key);
+  if (list.length >= MAX_TASKS) return null;
+  const now = Date.now();
+  const t = { id: cryptoId(), date: key, text: String(text).trim(), done: false,
+              order: list.length, updatedAt: now, deleted: false };
+  state.tasks[t.id] = t;
+  commit();
+  return t;
+}
+
+// Typing shouldn't trigger the global re-render — it would blow away the
+// input the user is mid-sentence in (same reason saveWorkoutQuiet exists).
+export function setTaskTextQuiet(id, text) {
+  const t = state.tasks[id]; if (!t) return;
+  t.text = text; t.updatedAt = Date.now();
+  persist(state);
+  if (syncHook) syncHook();
+}
+
+export function toggleTask(id) {
+  const t = state.tasks[id]; if (!t) return;
+  t.done = !t.done; t.updatedAt = Date.now();
+  commit();
+  return t.done;
+}
+
+export function deleteTask(id) {
+  const t = state.tasks[id]; if (!t) return;
+  t.deleted = true; t.updatedAt = Date.now();
+  commit();
+}
+
+// {done, total} for a day's top tasks
+export function taskStats(key) {
+  const list = tasksForDate(key).filter(t => t.text);
+  return { done: list.filter(t => t.done).length, total: list.length };
 }

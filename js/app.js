@@ -37,6 +37,7 @@ function renderMore() {
   if (moreSub === "supplements") return renderSupplements();
   if (moreSub === "history") return renderHistory();
   if (moreSub === "habits") return renderHabits();
+  if (moreSub === "focus") return renderFocusScreen();
   renderMoreMenu();
 }
 
@@ -52,6 +53,7 @@ function renderMoreMenu() {
     ${item("skin", "🪞", "Skin", "Daily check-in + AM/PM routine")}
     ${item("sleep", "😴", "Sleep", "Fix your schedule + log sleep")}
     ${item("supplements", "💊", "Supplements", "Your evidence-based stack")}
+    ${item("focus", "🎯", "Focus", "Focused hours, start times, where time went")}
     ${item("history", "📊", "History", "Habit consistency heatmap")}
     ${item("habits", "⚙️", "Habits", "Add / edit your daily habits")}
     <div class="hb-row" data-act="open-account">
@@ -121,9 +123,163 @@ function renderToday() {
       <div class="stat"><span class="stat-num">🔥 ${streak}</span><span class="stat-lbl">day streak</span></div>
     </div>
     ${allDone ? `<div class="celebrate">✅ All done for today. Locked in.</div>` : ""}
+    ${renderFocusCard(key)}
+    ${renderTasksCard(key)}
     ${total === 0 ? emptyToday() : sections}
     ${renderWaterCard(key)}
   `;
+  ensureFocusTicker();
+  if (pendingTaskFocus) { focusLastTaskInput(); pendingTaskFocus = false; }
+}
+
+// ---------------- FOCUS ----------------
+const pad2 = (n) => String(n).padStart(2, "0");
+const fmtCountdown = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return `${pad2(Math.floor(s / 60))}:${pad2(s % 60)}`; };
+const fmtMins = (m) => m >= 60 ? `${Math.floor(m / 60)}h ${m % 60 ? `${m % 60}m` : ""}`.trim() : `${m}m`;
+const fmtTimeOfDay = (ms) => { const d = new Date(ms); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+
+function renderFocusCard(key) {
+  const active = store.getActiveFocus();
+  const mins = store.focusMinutes(key);
+  const count = store.focusForDate(key).length;
+  const settings = store.getFocusSettings();
+
+  if (active) {
+    const remain = store.focusRemainingMs();
+    const total = active.minutes * 60000;
+    const pct = Math.min(100, Math.max(0, Math.round((total - remain) / total * 100)));
+    return `<div class="body-card focus-card running">
+      <div class="bc-head"><span>🎯 Focusing</span><span class="bc-sub">${esc(active.label)}</span></div>
+      <div class="focus-clock" id="focus-time">${fmtCountdown(remain)}</div>
+      <div class="bar"><div class="bar-fill" id="focus-bar" style="width:${pct}%"></div></div>
+      <div class="focus-actions">
+        <button class="btn" data-act="focus-stop">Stop early</button>
+        <button class="btn primary" data-act="focus-done">Finish ✓</button>
+      </div>
+    </div>`;
+  }
+
+  // "Did you start yet?" is the whole point — surface it before anything else.
+  const first = store.firstFocusStart(key);
+  const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+  const targetMin = store.timeToMin(settings.targetStart || "09:00");
+  const late = !first && nowMin > targetMin;
+  const startLine = first
+    ? `<span class="focus-started">Started ${fmtTimeOfDay(first)}</span>`
+    : late
+      ? `<span class="focus-late">Not started yet — target was ${esc(settings.targetStart)}</span>`
+      : `<span class="stat-lbl">Target start ${esc(settings.targetStart)}</span>`;
+
+  return `<div class="body-card focus-card${late ? " late" : ""}">
+    <div class="bc-head"><span>🎯 Focus</span>
+      <span class="bc-sub">${count ? `${count} block${count > 1 ? "s" : ""} · ${fmtMins(mins)}` : "nothing logged yet"}</span></div>
+    <div class="focus-startline">${startLine}</div>
+    <button class="btn primary full" data-act="focus-open">▶ Start a ${settings.sessionMin}-min block</button>
+  </div>`;
+}
+
+function renderTasksCard(key) {
+  const tasks = store.tasksForDate(key);
+  const { done, total } = store.taskStats(key);
+  const rows = tasks.map(t => `<div class="task-row${t.done ? " done" : ""}">
+      <button class="task-check${t.done ? " done" : ""}" data-act="task-toggle" data-id="${t.id}">✓</button>
+      <input class="task-input" data-task="${t.id}" value="${esc(t.text)}" placeholder="What actually matters today?" autocomplete="off"/>
+      <button class="btn tiny" data-act="task-del" data-id="${t.id}">✕</button>
+    </div>`).join("");
+
+  return `<div class="body-card">
+    <div class="bc-head"><span>📌 Top 3 today</span>
+      <span class="bc-sub">${total ? `${done}/${total}` : "pick up to 3"}</span></div>
+    ${rows || `<p class="stat-lbl" style="margin:2px 0 10px">Decide before the day decides for you.</p>`}
+    ${tasks.length < store.MAX_TASKS
+      ? `<button class="btn full" data-act="task-add">+ Add a task</button>` : ""}
+  </div>`;
+}
+
+// ----- live countdown -----
+// Derived from the clock every tick, never decremented, so a phone that
+// suspended the PWA for 20 minutes still shows the truth on resume.
+let focusTimer = null;
+let pendingTaskFocus = false;
+
+function ensureFocusTicker() {
+  const active = store.getActiveFocus();
+  if (active && !focusTimer) focusTimer = setInterval(focusTick, 1000);
+  if (!active && focusTimer) { clearInterval(focusTimer); focusTimer = null; }
+}
+
+function focusTick() {
+  const active = store.getActiveFocus();
+  if (!active) { ensureFocusTicker(); return; }
+  const remain = store.focusRemainingMs();
+
+  if (remain <= 0) {                       // ran to completion (possibly while backgrounded)
+    const s = store.endFocus({ completed: true });
+    chime();
+    toast(`Block complete — ${s.minutes} min logged 🎯`);
+    return;                                // endFocus commits, which re-renders
+  }
+  const el = $("#focus-time");
+  if (el) el.textContent = fmtCountdown(remain);
+  const bar = $("#focus-bar");
+  if (bar) {
+    const total = active.minutes * 60000;
+    bar.style.width = `${Math.min(100, Math.round((total - remain) / total * 100))}%`;
+  }
+}
+
+// short two-tone beep; the start tap unlocks audio so this works on iOS
+function chime() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    [880, 1320].forEach((hz, i) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = hz; o.type = "sine";
+      o.connect(g); g.connect(ctx.destination);
+      const t = ctx.currentTime + i * 0.18;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+      o.start(t); o.stop(t + 0.18);
+    });
+    setTimeout(() => ctx.close().catch(() => {}), 800);
+  } catch { /* audio is a nicety, never a failure */ }
+}
+
+function focusLastTaskInput() {
+  const inputs = [...document.querySelectorAll(".task-input")];
+  const target = inputs.find(i => !i.value) || inputs[inputs.length - 1];
+  if (target) { target.focus(); target.setSelectionRange(target.value.length, target.value.length); }
+}
+
+// recent labels, so starting a block is two taps rather than typing
+function openFocusModal() {
+  const s = store.getFocusSettings();
+  const recent = [...new Set(store.allFocusSessions()
+    .sort((a, b) => b.startedAt - a.startedAt).map(x => x.label))].slice(0, 6);
+  const chips = recent.map(l => `<button type="button" class="chip" data-act="focus-go" data-label="${esc(l)}">${esc(l)}</button>`).join("");
+  const durs = [15, 25, 50, 90].map(m =>
+    `<button type="button" class="seg-btn ${m === s.sessionMin ? "on" : ""}" data-fdur="${m}">${m}m</button>`).join("");
+
+  openModal(`
+    <h3>Start a focus block</h3>
+    ${recent.length ? `<div class="fld"><span>Again</span><div class="chips">${chips}</div></div>` : ""}
+    <label class="fld"><span>What are you working on?</span>
+      <input id="focus-label" type="text" placeholder="e.g. Coursework, Job applications" autocomplete="off"/></label>
+    <div class="fld"><span>How long</span><div class="seg wrap" id="focus-dur">${durs}</div></div>
+    <div class="modal-actions"><span></span><div>
+      <button class="btn" data-act="close-modal">Cancel</button>
+      <button class="btn primary" data-act="focus-go">Start</button></div></div>
+  `);
+  const modal = $("#modal");
+  let dur = s.sessionMin;
+  modal.querySelectorAll("[data-fdur]").forEach(b => b.onclick = () => {
+    dur = Number(b.dataset.fdur);
+    modal.querySelectorAll("[data-fdur]").forEach(x => x.classList.toggle("on", x === b));
+  });
+  modal._collect = () => ({ label: $("#focus-label").value, minutes: dur });
 }
 
 function renderWaterCard(key) {
@@ -1663,6 +1819,77 @@ function openAccount() {
   };
 }
 
+// ---------------- FOCUS stats screen ----------------
+function renderFocusScreen() {
+  const key = store.todayKey();
+  const s = store.getFocusSettings();
+  const series = store.focusSeries(30);
+  const logged = series.filter(x => x.w > 0);
+  const avgStart = store.avgFocusStart(14);
+  const week = series.slice(-7);
+  const weekMins = week.reduce((a, x) => a + x.w, 0);
+  const byLabel = store.focusByLabel(7);
+  const today = store.focusForDate(key);
+
+  const chart = logged.length >= 2
+    ? miniChart(series, "focused minutes / day")
+    : `<p class="stat-lbl">Log a couple of blocks to see your trend.</p>`;
+
+  const maxLbl = Math.max(1, ...byLabel.map(x => x.mins));
+  const labelRows = byLabel.length
+    ? byLabel.map(x => `<div class="lbl-row">
+        <div class="lbl-head"><span>${esc(x.label)}</span><span class="stat-lbl">${fmtMins(x.mins)}</span></div>
+        <div class="bar"><div class="bar-fill" style="width:${Math.round(x.mins / maxLbl * 100)}%"></div></div>
+      </div>`).join("")
+    : `<p class="stat-lbl">Nothing logged in the last 7 days.</p>`;
+
+  const todayRows = today.length
+    ? today.map(x => `<div class="sess-row">
+        <span class="sess-time">${fmtTimeOfDay(x.startedAt)}</span>
+        <span class="sess-label">${esc(x.label)}</span>
+        <span class="sess-mins">${x.minutes}m${x.completed ? "" : " ·  early"}</span>
+        <button class="btn tiny" data-act="focus-del" data-id="${x.id}">✕</button>
+      </div>`).join("")
+    : `<p class="stat-lbl">No blocks today yet.</p>`;
+
+  $("#view").innerHTML = `
+    ${subHeader("Focus")}
+    <div class="stat-row three">
+      <div class="stat"><span class="stat-num">🔥 ${store.focusStreak()}</span><span class="stat-lbl">day streak</span></div>
+      <div class="stat"><span class="stat-num">${fmtMins(weekMins)}</span><span class="stat-lbl">last 7 days</span></div>
+      <div class="stat"><span class="stat-num">${avgStart == null ? "—" : store.minToTime(avgStart)}</span><span class="stat-lbl">avg start</span></div>
+    </div>
+
+    <div class="body-card">
+      <div class="bc-head"><span>Focused minutes</span><span class="bc-sub">last 30 days</span></div>
+      ${chart}
+    </div>
+
+    <div class="body-card">
+      <div class="bc-head"><span>Where the time went</span><span class="bc-sub">last 7 days</span></div>
+      ${labelRows}
+    </div>
+
+    <div class="body-card">
+      <div class="bc-head"><span>Today's blocks</span></div>
+      ${todayRows}
+    </div>
+
+    <div class="body-card">
+      <div class="bc-head"><span>Settings</span></div>
+      <div class="row2">
+        <label class="fld"><span>Block length (min)</span>
+          <input id="f-len" type="number" inputmode="numeric" min="5" max="180" value="${s.sessionMin}"/></label>
+        <label class="fld"><span>Target start time</span>
+          <input id="f-start" type="time" value="${esc(s.targetStart)}"/></label>
+      </div>
+      <button class="btn primary full" data-act="focus-save-settings">Save</button>
+    </div>
+
+    <p class="tdee-note">Blocks stopped early still count their real minutes — the point is an honest picture, not a flattering one.</p>
+  `;
+}
+
 // ---------------- modal plumbing ----------------
 function openModal(html) {
   const back = $("#modal-back");
@@ -1784,6 +2011,40 @@ function onClick(e) {
       break;
     }
     case "ex-detail": openExerciseDetail(el.dataset.ex); break;
+
+    // --- focus & tasks ---
+    case "focus-open": openFocusModal(); break;
+    case "focus-go": {
+      // a recent-label chip starts immediately; the Start button reads the form
+      const fromChip = el.dataset.label;
+      const d = fromChip ? { label: fromChip, minutes: store.getFocusSettings().sessionMin }
+                         : $("#modal")._collect();
+      store.startFocus(d.label, d.minutes);
+      chime();                       // also unlocks audio for the end-of-block chime
+      closeModal(); render();
+      toast(`Focusing on ${store.getActiveFocus().label}`);
+      break;
+    }
+    case "focus-done": {
+      const s = store.endFocus({ completed: true });
+      render(); toast(`Nice — ${s.minutes} min logged 🎯`);
+      break;
+    }
+    case "focus-stop": {
+      const s = store.endFocus({ completed: false });
+      render(); toast(s.minutes ? `Stopped — ${s.minutes} min logged` : "Stopped");
+      break;
+    }
+    case "focus-del": store.deleteFocusSession(el.dataset.id); toast("Deleted"); break;
+    case "focus-save-settings": {
+      const len = Math.max(5, Math.min(180, Number($("#f-len").value) || 25));
+      store.updateFocusSettings({ sessionMin: len, targetStart: $("#f-start").value || "09:00" });
+      render(); toast("Saved");
+      break;
+    }
+    case "task-add": pendingTaskFocus = true; store.addTask(store.todayKey(), ""); break;
+    case "task-toggle": store.toggleTask(el.dataset.id); break;
+    case "task-del": store.deleteTask(el.dataset.id); break;
 
     // --- more hub ---
     case "more-nav": moreSub = el.dataset.sub; render(); break;
@@ -2018,10 +2279,13 @@ function onClick(e) {
 
 // persist weight/reps/notes typing without a re-render (keeps focus + taps intact)
 function onFieldChange(e) {
-  if (!gymSession) return;
   const el = e.target;
+  // task text saves quietly — a re-render would yank the input mid-sentence
+  if (el.hasAttribute("data-task")) { store.setTaskTextQuiet(el.dataset.task, el.value); return; }
+  if (!gymSession) return;
   const w = store.getWorkout(gymSession);
   if (!w) return;
+  if (!el.hasAttribute("data-w") && !el.hasAttribute("data-r") && !el.hasAttribute("data-notes")) return;
   if (el.hasAttribute("data-w") || el.hasAttribute("data-r")) {
     const set = w.entries[+el.dataset.ei]?.sets[+el.dataset.si];
     if (!set) return;
@@ -2047,6 +2311,11 @@ function boot() {
 
   store.onChange(() => render());
   cloud.onStatus(syncNavAndHeader);
+
+  // iOS freezes timers in a backgrounded PWA: recompute the moment we're back,
+  // so a block that finished in your pocket is logged rather than still ticking.
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) focusTick(); });
+  window.addEventListener("focus", focusTick);
 
   render();
   cloud.initCloud();
