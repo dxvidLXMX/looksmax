@@ -49,7 +49,7 @@ export function defaultProfile() {
     proteinTarget: null,  // manual override (null = auto)
     diet: { type: "omnivore", avoid: [], mealsPerDay: "3+snacks", cooking: "quick" },
     sleep: { targetBed: "23:00", targetWake: "07:00", currentBed: "", planStart: null },
-    focus: { sessionMin: 25, targetStart: "09:00" },
+    focus: { sessionMin: 25, targetStart: "09:00", notifyOnEnd: true },
     waterTarget: 8,
     updatedAt: 0,
   };

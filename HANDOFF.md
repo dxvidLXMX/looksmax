@@ -56,11 +56,12 @@ looksmax-app/
 │   ├── foods.js            # 470-item food DB (US chains + whole foods) + ranked search
 │   ├── off.js              # Open Food Facts: text search + barcode lookup
 │   ├── scanner.js          # Barcode scanning via ZXing (loaded from CDN at first use)
+│   ├── notify.js           # End-of-block notifications (permission + SW showNotification)
 │   ├── supplements.js      # Supplement stack data
 │   ├── program.js          # Training splits, exercise library, e1RM, prescribe
 │   ├── supabase-sync.js    # Two-way cloud sync (pull+merge, push, auth)
 │   └── config.js           # Supabase URL + anon key
-├── sw.js                   # Service worker v13 (stale-while-revalidate)
+├── sw.js                   # Service worker v14 (stale-while-revalidate)
 ├── manifest.webmanifest
 ├── supabase-schema.sql     # Already run on Supabase — DO NOT run again
 └── SETUP.md
@@ -92,7 +93,7 @@ state = {
     diet:  { type, avoid, mealsPerDay },
     sleep: { targetBed, targetWake, currentBed, planStart },
     skin:  { amSteps: [{id, name, product}], pmSteps: [...] },
-    focus: { sessionMin: 25, targetStart: "09:00" },
+    focus: { sessionMin: 25, targetStart: "09:00", notifyOnEnd: true },
     waterTarget: 8,
     updatedAt
   },
@@ -151,7 +152,7 @@ git push origin main
 # SW stale-while-revalidate — users get update on 2nd load
 ```
 
-**Bump `CACHE` in `sw.js`** if you need to force-evict the cache on all devices immediately. Currently at `looksmax-v13`.
+**Bump `CACHE` in `sw.js`** if you need to force-evict the cache on all devices immediately. Currently at `looksmax-v14`.
 
 ---
 
@@ -169,6 +170,8 @@ git push origin main
 - **store.onChange triggers render** — tapping a skin/routine step or water button causes a full re-render; DOM references go stale. Check outcomes via localStorage or freshly queried DOM selectors.
 - **nutrition.js `quick` field removed** — the `quick: true` flag was on all original meals but dropped in the expansion. The generator doesn't use it. Don't add it back.
 - **The focus timer is clock-derived, never decremented.** `activeFocus` stores an absolute `startedAt`; remaining time is always `startedAt + minutes*60000 - Date.now()`. iOS suspends JS timers in a backgrounded PWA, so a tick-based countdown silently stalls in your pocket. `focusTick()` also runs on `visibilitychange`/`focus`, so a block that finished while away is logged on return rather than still showing time left. Verified by rewinding `startedAt` 20 and 55 minutes.
+- **End-of-block alerts fire from the live page, not from a scheduler.** There is no web API to schedule a future notification: Notification Triggers never shipped outside Chrome, and a service worker is killed after ~30s idle so it can't hold a timer. Waking a fully-suspended iPhone would need real Web Push from a server. So `fireBlockAlert()` has two triggers — the 1s ticker and a `setTimeout` armed for the exact end time — deduped by `alertedFor`. Verified: exactly one notification fired with both triggers active.
+- **iOS only allows notifications for a PWA installed to the home screen**, and permission must be requested straight from a tap. `notify.blockedReason()` returns the specific reason (not installed / denied / unsupported) so the UI can say something useful instead of failing silently.
 - **`activeFocus` is deliberately local-only** (`commit({sync:false})`) — a half-finished timer syncing to another device would resurrect or double-log it. Completed sessions and tasks do sync.
 - **Blocks stopped early log their real elapsed minutes**, flagged `completed:false`. Discarding them would make the weekly totals flattering and useless.
 - **Task text saves via `setTaskTextQuiet`** — a normal commit re-renders and rips the input out from under the user mid-sentence (same reason `saveWorkoutQuiet` exists). `onFieldChange` handles `data-task` before the gym-session early-return.
@@ -190,7 +193,7 @@ git push origin main
 ## Potential next features (David's ideas + gaps)
 
 - **Grams / unit conversion** — foods currently have one canonical serving each plus a quantity multiplier. A `grams` field per food would allow "150 g chicken breast".
-- **Notifications when a block ends** — currently only an in-app chime, so a finished block is silent if the phone is locked. iOS 16.4+ supports Web Push for installed PWAs; would need permission flow + service-worker push handling.
+- **Web Push server for focus alerts** — the current alert can't wake a fully-closed app (see gotchas). Doing it properly means VAPID keys, storing push subscriptions, and a Supabase Edge Function + pg_cron firing due sessions. Only worth it if the local alert proves insufficient.
 - **Progress photos** — log physical appearance over time
 - **Google/GitHub OAuth** — one-tap sign-in
 - **Realtime Supabase sync** — two open tabs stay live

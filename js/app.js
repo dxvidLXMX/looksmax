@@ -9,6 +9,7 @@ import * as nutrition from "./nutrition.js";
 import * as foods from "./foods.js";
 import * as off from "./off.js";
 import * as scanner from "./scanner.js";
+import * as notify from "./notify.js";
 import { SUPPLEMENTS, TIER_INFO, BLUEPRINT_SKIP } from "./supplements.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -204,8 +205,8 @@ let pendingTaskFocus = false;
 
 function ensureFocusTicker() {
   const active = store.getActiveFocus();
-  if (active && !focusTimer) focusTimer = setInterval(focusTick, 1000);
-  if (!active && focusTimer) { clearInterval(focusTimer); focusTimer = null; }
+  if (active && !focusTimer) { focusTimer = setInterval(focusTick, 1000); armAlertTimer(); }
+  if (!active && focusTimer) { clearInterval(focusTimer); focusTimer = null; clearAlertTimer(); }
 }
 
 function focusTick() {
@@ -215,7 +216,7 @@ function focusTick() {
 
   if (remain <= 0) {                       // ran to completion (possibly while backgrounded)
     const s = store.endFocus({ completed: true });
-    chime();
+    fireBlockAlert(s);
     toast(`Block complete — ${s.minutes} min logged 🎯`);
     return;                                // endFocus commits, which re-renders
   }
@@ -226,6 +227,37 @@ function focusTick() {
     const total = active.minutes * 60000;
     bar.style.width = `${Math.min(100, Math.round((total - remain) / total * 100))}%`;
   }
+}
+
+// ----- end-of-block alert -----
+// Two independent triggers so a throttled background tab still fires close to
+// on time: the 1s ticker, and a timeout armed for the exact end moment.
+// `alertedFor` keeps them from double-firing for the same block.
+let alertedFor = null;
+let alertTimer = null;
+
+function fireBlockAlert(session) {
+  if (!session || alertedFor === session.id) return;
+  alertedFor = session.id;
+  clearAlertTimer();
+  chime();
+  if (store.getFocusSettings().notifyOnEnd !== false) {
+    notify.notify("Focus block done 🎯", `${session.label} · ${session.minutes} min logged`);
+  }
+}
+
+function clearAlertTimer() {
+  if (alertTimer) { clearTimeout(alertTimer); alertTimer = null; }
+}
+
+// arm a precise timeout for the running block, if any
+function armAlertTimer() {
+  clearAlertTimer();
+  const active = store.getActiveFocus();
+  if (!active) return;
+  const ms = store.focusRemainingMs();
+  if (ms <= 0) { focusTick(); return; }
+  alertTimer = setTimeout(() => { alertTimer = null; focusTick(); }, ms + 250);
 }
 
 // short two-tone beep; the start tap unlocks audio so this works on iOS
@@ -254,6 +286,17 @@ function focusLastTaskInput() {
   if (target) { target.focus(); target.setSelectionRange(target.value.length, target.value.length); }
 }
 
+// One-line nudge shown only while alerts are still switchable-on.
+function notifyPrompt() {
+  if (notify.permission() === "granted") return "";
+  const why = notify.blockedReason();
+  if (why) return `<p class="note" style="margin-bottom:12px">🔔 ${esc(why)}</p>`;
+  return `<div class="notify-prompt">
+    <span>🔔 Get alerted when the block ends?</span>
+    <button class="btn tiny primary" data-act="notify-enable">Enable</button>
+  </div>`;
+}
+
 // recent labels, so starting a block is two taps rather than typing
 function openFocusModal() {
   const s = store.getFocusSettings();
@@ -265,6 +308,7 @@ function openFocusModal() {
 
   openModal(`
     <h3>Start a focus block</h3>
+    ${notifyPrompt()}
     ${recent.length ? `<div class="fld"><span>Again</span><div class="chips">${chips}</div></div>` : ""}
     <label class="fld"><span>What are you working on?</span>
       <input id="focus-label" type="text" placeholder="e.g. Coursework, Job applications" autocomplete="off"/></label>
@@ -1819,6 +1863,25 @@ function openAccount() {
   };
 }
 
+function notifyRow(s) {
+  const perm = notify.permission();
+  if (perm === "granted") {
+    const on = s.notifyOnEnd !== false;
+    return `<div class="fld"><span>End-of-block alert</span>
+      <div class="seg">
+        <button type="button" class="seg-btn ${on ? "on" : ""}" data-act="notify-toggle" data-on="1">🔔 On</button>
+        <button type="button" class="seg-btn ${on ? "" : "on"}" data-act="notify-toggle" data-on="0">Off</button>
+      </div>
+      <span class="stat-lbl">Fires while the app is open or recently backgrounded. iOS can't wake a fully closed app without a push server.</span>
+    </div>`;
+  }
+  const why = notify.blockedReason();
+  return `<div class="fld"><span>End-of-block alert</span>
+    ${why ? `<span class="stat-lbl">${esc(why)}</span>`
+          : `<button class="btn full" data-act="notify-enable">🔔 Enable alerts</button>`}
+  </div>`;
+}
+
 // ---------------- FOCUS stats screen ----------------
 function renderFocusScreen() {
   const key = store.todayKey();
@@ -1883,6 +1946,7 @@ function renderFocusScreen() {
         <label class="fld"><span>Target start time</span>
           <input id="f-start" type="time" value="${esc(s.targetStart)}"/></label>
       </div>
+      ${notifyRow(s)}
       <button class="btn primary full" data-act="focus-save-settings">Save</button>
     </div>
 
@@ -2036,6 +2100,25 @@ function onClick(e) {
       break;
     }
     case "focus-del": store.deleteFocusSession(el.dataset.id); toast("Deleted"); break;
+    case "notify-enable": {
+      // must run straight off this tap — iOS rejects a deferred request
+      notify.requestPermission().then(async (p) => {
+        if (p === "granted") {
+          store.updateFocusSettings({ notifyOnEnd: true });
+          await notify.notify("Alerts are on 🔔", "You'll get a nudge when a focus block ends.");
+          toast("Alerts enabled");
+        } else {
+          toast(p === "denied" ? "Alerts blocked in system settings" : "Alerts not enabled");
+        }
+        render();
+      });
+      break;
+    }
+    case "notify-toggle":
+      store.updateFocusSettings({ notifyOnEnd: el.dataset.on === "1" });
+      render();
+      toast(el.dataset.on === "1" ? "Alerts on" : "Alerts off");
+      break;
     case "focus-save-settings": {
       const len = Math.max(5, Math.min(180, Number($("#f-len").value) || 25));
       store.updateFocusSettings({ sessionMin: len, targetStart: $("#f-start").value || "09:00" });

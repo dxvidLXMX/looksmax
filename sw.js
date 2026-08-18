@@ -1,5 +1,5 @@
 // Service worker — offline app shell (cache-first for local files).
-const CACHE = "looksmax-v13";
+const CACHE = "looksmax-v14";
 const ASSETS = [
   "./",
   "./index.html",
@@ -14,6 +14,7 @@ const ASSETS = [
   "./js/foods.js",
   "./js/off.js",
   "./js/scanner.js",
+  "./js/notify.js",
   "./js/supplements.js",
   "./manifest.webmanifest",
   "./icons/icon.svg",
@@ -50,4 +51,17 @@ self.addEventListener("fetch", (e) => {
       });
     })
   );
+});
+
+// Tapping an end-of-block alert should bring the app forward rather than
+// opening a second copy of it.
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  e.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const c of all) {
+      if ("focus" in c) return c.focus();
+    }
+    if (self.clients.openWindow) return self.clients.openWindow("./");
+  })());
 });
