@@ -61,7 +61,7 @@ looksmax-app/
 │   ├── program.js          # Training splits, exercise library, e1RM, prescribe
 │   ├── supabase-sync.js    # Two-way cloud sync (pull+merge, push, auth)
 │   └── config.js           # Supabase URL + anon key
-├── sw.js                   # Service worker v14 (stale-while-revalidate)
+├── sw.js                   # Service worker v15 (stale-while-revalidate)
 ├── manifest.webmanifest
 ├── supabase-schema.sql     # Already run on Supabase — DO NOT run again
 └── SETUP.md
@@ -149,10 +149,10 @@ git add <files>
 git -c commit.gpgsign=false commit -m "Description"
 git push origin main
 # GitHub Pages deploys in ~1 min
-# SW stale-while-revalidate — users get update on 2nd load
+# App self-updates: checks on foreground, reloads when the new worker takes over
 ```
 
-**Bump `CACHE` in `sw.js`** if you need to force-evict the cache on all devices immediately. Currently at `looksmax-v14`.
+**Bump `CACHE` in `sw.js`** if you need to force-evict the cache on all devices immediately. Currently at `looksmax-v15`.
 
 ---
 
@@ -164,7 +164,8 @@ git push origin main
 
 ## Known gotchas
 
-- **SW cache** — after JS/CSS changes, bump `CACHE` in `sw.js` OR rely on stale-while-revalidate (users get new version on second load automatically).
+- **Updates are automatic since v15** — don't tell the user to force-close any more. Navigations are network-first, `reg.update()` runs on load and whenever the app comes to the foreground, and a `controllerchange` triggers one `location.reload()`. The `hadController` guard stops the very first install (which claims the page) from causing a pointless reload. Before this, an installed iOS PWA was *resumed* rather than reloaded, so the update check never ran and the app could sit on an old build indefinitely — it looked like a broken deploy three times running.
+- **Still bump `CACHE` in `sw.js` on every deploy** — that's what makes the browser see a byte-different `sw.js` and trigger the update.
 - **TDZ bug** — `load()` in store.js must NOT assign the module-level `let state` during its own initializer; write to localStorage directly in first-run path.
 - **Screenshot** — `computer({action:"screenshot"})` fails when browser pane isn't displayed. Use `javascript_tool` DOM checks instead.
 - **store.onChange triggers render** — tapping a skin/routine step or water button causes a full re-render; DOM references go stale. Check outcomes via localStorage or freshly queried DOM selectors.

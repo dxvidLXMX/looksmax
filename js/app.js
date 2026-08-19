@@ -2403,10 +2403,36 @@ function boot() {
   render();
   cloud.initCloud();
 
-  // register service worker for offline/installability
-  if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js").catch(() => {});
-  }
+  registerServiceWorker();
+}
+
+// Keeping an installed PWA up to date.
+//
+// iOS resumes a home-screen app rather than reloading it, so registration —
+// and therefore the update check — may not run for days. The app then sits on
+// an old build with no way to know. Two fixes: ask for an update check every
+// time the app comes to the foreground, and reload once when a new worker
+// actually takes over.
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadController || reloading) return;   // first install claims the page; that's not an update
+    reloading = true;
+    location.reload();
+  });
+
+  navigator.serviceWorker.register("./sw.js").then(reg => {
+    reg.update().catch(() => {});                       // check on every load
+    // visibilitychange also fires on hide; only bother when coming forward
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) reg.update().catch(() => {});
+    });
+    window.addEventListener("focus", () => reg.update().catch(() => {}));
+  }).catch(() => {});
 }
 
 boot();

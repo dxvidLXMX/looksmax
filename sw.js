@@ -1,5 +1,5 @@
 // Service worker — offline app shell (cache-first for local files).
-const CACHE = "looksmax-v14";
+const CACHE = "looksmax-v15";
 const ASSETS = [
   "./",
   "./index.html",
@@ -38,8 +38,22 @@ self.addEventListener("fetch", (e) => {
   // Only handle same-origin GETs; everything else (Supabase, CDN) goes straight to network.
   if (e.request.method !== "GET" || url.origin !== self.location.origin) return;
 
-  // Stale-while-revalidate: respond from cache immediately, refresh cache in background.
-  // Next load always gets the latest version without needing a SW version bump.
+  // Navigations go network-first. Stale-while-revalidate on the HTML shell meant
+  // an installed PWA could sit on an old build indefinitely if it was resumed
+  // rather than reloaded — which is exactly what kept happening on iOS.
+  if (e.request.mode === "navigate") {
+    e.respondWith(
+      fetch(e.request)
+        .then(res => {
+          if (res.ok) caches.open(CACHE).then(c => c.put(e.request, res.clone()));
+          return res;
+        })
+        .catch(async () => (await caches.match(e.request)) || caches.match("./index.html"))
+    );
+    return;
+  }
+
+  // Everything else: stale-while-revalidate — instant from cache, refreshed behind.
   e.respondWith(
     caches.open(CACHE).then(cache => {
       return cache.match(e.request).then(cached => {
@@ -53,8 +67,6 @@ self.addEventListener("fetch", (e) => {
   );
 });
 
-// Tapping an end-of-block alert should bring the app forward rather than
-// opening a second copy of it.
 self.addEventListener("notificationclick", (e) => {
   e.notification.close();
   e.waitUntil((async () => {
